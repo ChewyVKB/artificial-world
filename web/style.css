@@ -119,3 +119,14 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 .person-head .spacer { flex: 1; }
 .person-head button.on { border-color: #ffc46b; color: #ffc46b; }
 .kids { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; }
+
+.techs { list-style: none; margin: 8px 0; padding: 0; }
+.techs li { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+.techs .tstat { font: 12px var(--mono); color: var(--muted); text-align: right; }
+.techs .tsub { grid-column: span 2; font-size: 11px; color: var(--muted); }
+.techs li.known .tname { color: #9ec5ff; }
+.techs li.lost .tname { color: var(--danger); }
+.techs li.undiscovered { opacity: .45; }
+.row-btns { display: flex; gap: 6px; align-items: center; }
+button.danger { color: var(--danger); border-color: #4a2a24; }
+button.danger:hover { border-color: var(--danger); }

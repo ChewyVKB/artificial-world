@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from . import knowledge
+
 # ── heritable traits ──────────────────────────────────────────────────
 # Each has a real trade-off, so evolution has something to work with.
 GENES = (
@@ -30,10 +32,11 @@ GENES = (
     "longevity",    # age slower, but bodies cost more to maintain
     "wanderlust",   # how restless — willing to move somewhere unknown
     "sociability",  # how strongly drawn toward other people
+    "curiosity",    # tinkers and experiments more — but spends less time foraging
 )
 G = {name: i for i, name in enumerate(GENES)}
-GENE_RANGE = np.array([[0.6, 1.4], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1]])
-START_GENES = np.array([1.0, 0.2, 0.5, 0.5, 0.3, 0.5])
+GENE_RANGE = np.array([[0.6, 1.4], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1]])
+START_GENES = np.array([1.0, 0.2, 0.5, 0.5, 0.3, 0.5, 0.5])
 
 FEMALE, MALE = 0, 1
 CAUSES = ("old age & illness", "starvation", "thirst", "predators")
@@ -44,12 +47,17 @@ ARRAYS = {   # name -> dtype; one entry per living person
     "mother": np.int64, "father": np.int64, "partner": np.int64, "gen": np.int32,
     "pregnant_until": np.int64, "pregnant_by": np.int64, "last_birth": np.int64,
     "target": np.int64,     # where this household is heading (a cell), or -1
+    "known": np.uint32,     # techniques this person knows (one bit each, see knowledge.py)
+    "items": np.uint32,     # things this person is carrying (one bit each)
 }
+DEFAULTS = {"known": 0, "items": 0}    # value for fields missing from older saves (else -1)
 
 
 def empty() -> dict:
+    from .knowledge import R
     p = {k: np.zeros(0, dtype=t) for k, t in ARRAYS.items()}
     p["genes"] = np.zeros((0, len(GENES)))
+    p["skill"] = np.zeros((0, R), dtype=np.float32)
     p["next_id"] = 1
     return p
 
@@ -58,6 +66,7 @@ def save_arrays(p: dict) -> dict:
     """Flatten people into named arrays for a checkpoint file."""
     out = {f"people.{k}": p[k] for k in ARRAYS}
     out["people.genes"] = p["genes"]
+    out["people.skill"] = p["skill"]
     out["people.next_id"] = np.int64(p["next_id"])
     return out
 
@@ -66,9 +75,15 @@ def load_arrays(z) -> dict | None:
     if "people.id" not in z:
         return None
     n = z["people.id"].size
-    p = {k: (z[f"people.{k}"].astype(t) if f"people.{k}" in z else np.full(n, -1, dtype=t))
-         for k, t in ARRAYS.items()}                    # fields added later default to -1
-    p["genes"] = z["people.genes"].astype(float)
+    from .knowledge import R
+    p = {k: (z[f"people.{k}"].astype(t) if f"people.{k}" in z else np.full(n, DEFAULTS.get(k, -1), dtype=t))
+         for k, t in ARRAYS.items()}                    # fields added later get a default
+    genes = z["people.genes"].astype(float)
+    if genes.shape[1] < len(GENES):                     # traits added later start at the founders' value
+        pad = np.repeat(START_GENES[None, genes.shape[1]:], n, axis=0)
+        genes = np.concatenate([genes, pad], axis=1)
+    p["genes"] = genes
+    p["skill"] = z["people.skill"].astype(np.float32) if "people.skill" in z else np.zeros((n, R), dtype=np.float32)
     p["next_id"] = int(z["people.next_id"])
     return p
 
@@ -77,6 +92,7 @@ def fingerprint_arrays(p: dict):
     for k in ARRAYS:
         yield np.ascontiguousarray(p[k]).tobytes()
     yield np.ascontiguousarray(p["genes"]).tobytes()
+    yield np.ascontiguousarray(p["skill"]).tobytes()
     yield str(p["next_id"]).encode()
 
 
@@ -112,7 +128,9 @@ def founders(cfg: dict, static: dict, rng: np.random.Generator, tick: int) -> tu
         "partner": np.full(n, -1, dtype=np.int64), "gen": np.zeros(n, dtype=np.int32),
         "pregnant_until": np.full(n, -1, dtype=np.int64), "pregnant_by": np.full(n, -1, dtype=np.int64),
         "last_birth": np.full(n, -10 ** 9, dtype=np.int64), "target": np.full(n, -1, dtype=np.int64),
+        "known": np.zeros(n, dtype=np.uint32), "items": np.zeros(n, dtype=np.uint32),
         "genes": np.clip(genes, GENE_RANGE[:, 0], GENE_RANGE[:, 1]),
+        "skill": np.zeros((n, p["skill"].shape[1]), dtype=np.float32),
         "next_id": n + 1,
     })
     return p, cradle
@@ -150,7 +168,7 @@ def households(p: dict, age_y: np.ndarray) -> np.ndarray:
 def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generator) -> dict:
     """Advance every person by one day. Returns births and deaths for the record."""
     p = world.state["people"]
-    out = {"births": [], "deaths": []}
+    out = {"births": [], "deaths": [], "discoveries": []}
     n = p["id"].size
     if n == 0:
         return out
@@ -179,8 +197,14 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     # ── 2. gather, hunt, share ──────────────────────────────────
     pos = p["pos"]
     size = genes[:, G["size"]]
+    learning = knowledge.enabled(world.cfg)
+    fx = knowledge.effects(world, head) if learning else None
     capacity = np.where(age_y >= 15, cfg["adult_harvest"], np.where(age_y >= 6, 0.35 * cfg["adult_harvest"], 0.0))
     hunt_skill = capacity * size
+    if learning:
+        tinkering = 1 - 0.1 * genes[:, G["curiosity"]]      # time spent experimenting isn't spent foraging
+        capacity = capacity * tinkering * fx["gather"]
+        hunt_skill = hunt_skill * tinkering * fx["hunt"]
     want_p = np.bincount(pos, capacity, minlength=ncell)
     want_h = np.bincount(pos, hunt_skill, minlength=ncell)
     frac_p = np.minimum(1.0, plant_supply / np.maximum(want_p, 1e-9))
@@ -188,12 +212,15 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     # Each person splits effort between gathering and hunting in proportion to what's available.
     w_p = plant_supply[pos] / np.maximum(supply[pos], 1e-9)
     got = capacity * w_p * frac_p[pos] + hunt_skill * (1 - w_p) * frac_h[pos]
+    if learning:
+        got = (got + fx["extra_food"] * s["capacity_c"][pos]) * fx["food"]
     took_p = np.bincount(pos, capacity * w_p * frac_p[pos], minlength=ncell)
     took_h = np.bincount(pos, hunt_skill * (1 - w_p) * frac_h[pos], minlength=ncell)
     P -= np.minimum(took_p * cfg["plant_cost"], P)
     Gz -= np.minimum(took_h * cfg["hunt_cost"], Gz)
 
-    cold = np.clip(12.0 - 16.0 * genes[:, G["insulation"]] - temp_c[pos], 0, None) / 10.0
+    shift = fx["cold_shift"] if learning else 0.0
+    cold = np.clip(12.0 - 16.0 * genes[:, G["insulation"]] - shift - temp_c[pos], 0, None) / 10.0
     cold *= np.clip(1.3 - 0.5 * size, 0.4, 1.2)               # big bodies keep warm better
     heat = np.clip(temp_c[pos] - (32.0 - 8.0 * genes[:, G["insulation"]]), 0, None) / 8.0
     pregnant = p["pregnant_until"] > tick
@@ -211,7 +238,8 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     p["energy"] = np.clip(p["energy"] + gap / 25.0, 0.0, 1.0)
     starving = (p["energy"] <= 0) & (gap < 0)
     water = s["water_c"][pos] | (rain_mm[pos] > 2.5)
-    p["hydration"] = np.where(water, 1.0, np.clip(p["hydration"] - 0.25 - 0.1 * heat, 0, 1))
+    thirst_rate = fx["thirst"] if learning else 1.0
+    p["hydration"] = np.where(water, 1.0, np.clip(p["hydration"] - (0.25 + 0.1 * heat) * thirst_rate, 0, 1))
     thirsty = p["hydration"] <= 0
     p["health"] = np.clip(
         p["health"]
@@ -220,7 +248,11 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
         - heat * 0.01
         + ((p["energy"] > 0.2) & (p["hydration"] > 0.3)) * 0.01, 0, 1)
 
-    # ── 4. pair up ─────────────────────────────────────────────
+    # ── 4. discover, learn, make things ──────────────────────────
+    if learning:
+        out["discoveries"] = knowledge.daily(world, age_y, fx["fire"], rng)
+
+    # ── 5. pair up ─────────────────────────────────────────────
     _pair(p, age_y, rng)
 
     # ── 5. conceive and give birth ───────────────────────────────
@@ -246,6 +278,13 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     yearly = 0.10 * np.exp(-age_y / 1.5) + 0.004 + 0.00025 * np.exp(0.09 * age_y) * aging
     yearly *= 1 + 2.0 * (1 - p["health"])                     # weak bodies get sick
     prey = Z[p["pos"]] * cfg["predator_danger"] * np.where(age_y < 12, 3.0, 1.0)
+    if learning:                       # fire and spears keep predators off; shelter eases harsh seasons
+        guard = np.ones(n)
+        guard[: fx["predators"].size] = fx["predators"]
+        prey *= guard
+        weather = np.ones(n)
+        weather[: fx["weather"].size] = fx["weather"]
+        yearly *= weather
     h_old, h_pred = yearly / dpy, prey / dpy
     u = rng.random(n)
     dies_hazard = u < h_old + h_pred
@@ -400,6 +439,7 @@ def _births(p: dict, mothers: np.ndarray, tick: int, cfg: dict, rng: np.random.G
         "gen": (np.maximum(p["gen"][mothers], father_gen) + 1).astype(np.int32),
         "pregnant_until": np.full(k, -1, dtype=np.int64), "pregnant_by": np.full(k, -1, dtype=np.int64),
         "last_birth": np.full(k, -10 ** 9, dtype=np.int64), "target": np.full(k, -1, dtype=np.int64),
+        "known": np.zeros(k, dtype=np.uint32), "items": np.zeros(k, dtype=np.uint32),
     }
     p["energy"][mothers] = np.maximum(p["energy"][mothers] - 0.15, 0)
     p["last_birth"][mothers] = tick
@@ -407,6 +447,7 @@ def _births(p: dict, mothers: np.ndarray, tick: int, cfg: dict, rng: np.random.G
     for key, arr in new.items():
         p[key] = np.concatenate([p[key], arr])
     p["genes"] = np.concatenate([p["genes"], child_genes])
+    p["skill"] = np.concatenate([p["skill"], np.zeros((k, p["skill"].shape[1]), dtype=np.float32)])
     return [(int(new_ids[j]), int(new["mother"][j]), int(new["father"][j]), int(new["sex"][j]),
              int(new["pos"][j]), int(new["gen"][j]), child_genes[j].round(4).tolist()) for j in range(k)]
 
@@ -417,3 +458,4 @@ def _remove(p: dict, rows: np.ndarray) -> None:
     for key in ARRAYS:
         p[key] = p[key][keep]
     p["genes"] = p["genes"][keep]
+    p["skill"] = p["skill"][keep]

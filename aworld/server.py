@@ -4,7 +4,7 @@
     GET  /api/status            time, speed, headline numbers
     GET  /api/terrain           unchanging map layers (binary)
     GET  /api/frame             current living layers (binary): plants, grazers,
-                                predators, snow, temperature, rain, people
+                                predators, snow, temperature, rain, people, knowledge
     GET  /api/metrics           statistics over time (JSON)
     GET  /api/events            the history log (JSON)
     GET  /api/cell?x=&y=        everything about one spot on the map
@@ -16,6 +16,8 @@
     POST /api/seek              {"tick": N}  rewind to an exact day
     POST /api/worlds            {"name": "...", "seed": 123}  create a new world
     POST /api/worlds/open       {"id": "..."}  switch to another saved world
+    POST /api/worlds/delete     {"id": "..."}  delete a world permanently
+    GET  /api/knowledge         every technique: who knows it, when it was found or lost
 """
 from __future__ import annotations
 
@@ -125,6 +127,13 @@ def make_handler(runner: Runner):
         def r_person(self, q):
             self._json(runner.person(int(q.get("id", 0))))
 
+        def r_knowledge(self, q):
+            self._json(runner.knowledge())
+
+        def r_delete_world(self, q):
+            current = runner.delete_world(self._body()["id"])
+            self._json({"current": current})
+
         def r_worlds(self, q):
             self._json({"current": runner.store.meta["id"], "worlds": list_worlds(runner.worlds_dir)})
 
@@ -161,8 +170,10 @@ def make_handler(runner: Runner):
         def r_new_world(self, q):
             b = self._body()
             seed = b.get("seed")
-            wid = runner.create_world(name=b.get("name") or "New World",
-                                      seed=int(seed) if seed not in (None, "") else None)
+            if seed in (None, ""):
+                import secrets
+                seed = secrets.randbelow(1_000_000_000)   # blank = a brand-new random world (the seed is saved)
+            wid = runner.create_world(name=b.get("name") or "New World", seed=int(seed))
             self._json({"id": wid})
 
         def r_open_world(self, q):
@@ -179,6 +190,8 @@ def make_handler(runner: Runner):
         ("GET", "/api/worlds"): Handler.r_worlds,
         ("GET", "/api/people"): Handler.r_people,
         ("GET", "/api/person"): Handler.r_person,
+        ("GET", "/api/knowledge"): Handler.r_knowledge,
+        ("POST", "/api/worlds/delete"): Handler.r_delete_world,
         ("POST", "/api/control"): Handler.r_control,
         ("POST", "/api/save"): Handler.r_save,
         ("POST", "/api/seek"): Handler.r_seek,

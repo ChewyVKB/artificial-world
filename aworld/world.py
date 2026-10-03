@@ -150,10 +150,10 @@ def build_static(cfg: dict) -> dict:
         "hemisphere_c": compact(np.sign(lat)),
         "capacity_c": compact(capacity),
     }
-    return add_derived(static)
+    return add_derived(static, w["seed"])
 
 
-def add_derived(static: dict) -> dict:
+def add_derived(static: dict, seed: int | None = None) -> dict:
     """Layers computed from the saved landscape. Recomputed on load, so worlds
     saved by older versions gain them automatically."""
     hab = static["habitable"]
@@ -193,6 +193,9 @@ def add_derived(static: dict) -> dict:
             dist[nxt] = d
             frontier = nxt
         static["water_dist_c"] = dist
+    if "stone_c" not in static and seed is not None:
+        from .knowledge import material_fields
+        static.update(material_fields(static, seed))
     return static
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from . import knowledge as kn
 from .ecology import BIOMES
 from .people import CAUSES, G, GENES
 from .world import World
@@ -61,6 +62,17 @@ def measure_people(world: World) -> dict:
     return m
 
 
+def measure_knowledge(world: World) -> dict:
+    p = world.state["people"]
+    n = max(p["id"].size, 1)
+    counts = kn.knowers(p)
+    m = {"techniques_known": float((counts > 0).sum()),
+         "techniques_per_person": float(sum(counts)) / n}
+    for r, rec in enumerate(kn.RECIPES):
+        m[f"know_{rec['key']}_pct"] = 100.0 * counts[r] / n
+    return m
+
+
 def find_groups(world: World) -> list[tuple[int, int]]:
     """Clusters of people living within ~2 days' walk of each other.
     Returns [(size, a cell in the group)], largest first."""
@@ -98,20 +110,62 @@ class Observer:
     def after_step(self, world: World, flows: dict, metrics_every: int) -> tuple[dict, list[dict]]:
         """Called after every simulated day. Returns (metrics or {}, new events)."""
         events: list[dict] = []
+        learning = world.has_people and kn.enabled(world.cfg)
         if world.has_people:
             events += self._count_people(world, flows.get("people", {}))
+        if learning:
+            events += self._discoveries(world, flows.get("people", {}).get("discoveries", []))
         metrics = {}
         if world.tick % metrics_every == 0:
             metrics = measure(world, flows)
             if world.has_people:
                 metrics.update(measure_people(world))
+            if learning:
+                metrics.update(measure_knowledge(world))
         if world.day_of_year == 0:
             events += self._yearly(world, metrics or measure(world, flows))
             if world.has_people:
                 yearly, ev = self._yearly_people(world)
                 metrics.update(yearly)
                 events += ev
+            if learning:
+                events += self._yearly_knowledge(world)
         return metrics, events
+
+    # ── knowledge ──────────────────────────────────────────────
+    def _discoveries(self, world: World, found: list) -> list[dict]:
+        tech = self.memory.setdefault("tech", {})
+        ev = []
+        for pid, r, cell in found:
+            rec = kn.RECIPES[r]
+            t = tech.get(rec["key"])
+            if t is None:
+                tech[rec["key"]] = {"first_year": world.year, "first_by": pid, "first_cell": cell,
+                                    "lost_year": None, "times_lost": 0}
+                ev.append({"tick": world.tick, "type": "DISCOVERY", "major": True,
+                           "title": f"Year {world.year}: #{pid} works out {rec['name'].lower()} — a first for this world",
+                           "data": {"technique": rec["key"], "person": pid, "cell": cell}})
+            elif t["lost_year"] is not None:
+                gap = world.year - t["lost_year"]
+                t["lost_year"] = None
+                ev.append({"tick": world.tick, "type": "REDISCOVERY", "major": True,
+                           "title": f"Year {world.year}: #{pid} rediscovers {rec['name'].lower()}, lost {gap} years ago",
+                           "data": {"technique": rec["key"], "person": pid, "cell": cell, "years_lost": gap}})
+        return ev
+
+    def _yearly_knowledge(self, world: World) -> list[dict]:
+        tech = self.memory.setdefault("tech", {})
+        counts = kn.knowers(world.state["people"])
+        ev = []
+        for r, rec in enumerate(kn.RECIPES):
+            t = tech.get(rec["key"])
+            if t and t["lost_year"] is None and counts[r] == 0:
+                t["lost_year"] = world.year
+                t["times_lost"] += 1
+                ev.append({"tick": world.tick, "type": "KNOWLEDGE_LOST", "major": True,
+                           "title": f"Year {world.year}: {rec['name'].lower()} is lost — no one living knows it any more",
+                           "data": {"technique": rec["key"]}})
+        return ev
 
     # ── people ─────────────────────────────────────────────────
     def _count_people(self, world: World, today: dict) -> list[dict]:

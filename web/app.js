@@ -31,6 +31,10 @@ const RAMPS = {
   temp: [[0, .18, .30, .75], [.47, .90, .93, .95], [.7, .95, .75, .35], [1, .80, .18, .14]],
   rain: [[0, .62, .38, .18], [.5, .90, .90, .86], [1, .18, .42, .80]],
   people: [[0, .14, .15, .15], [.02, .45, .30, .55], [.3, .95, .55, .35], [1, 1.0, .95, .75]],
+  knowledge: [[0, .14, .15, .15], [.05, .30, .25, .50], [.5, .45, .60, .90], [1, .85, .95, 1.0]],
+  stone: [[0, .16, .17, .16], [1, .85, .85, .80]],
+  clay: [[0, .16, .17, .16], [1, .80, .45, .30]],
+  wood: [[0, .16, .17, .16], [1, .30, .60, .25]],
 };
 const PERSON = [1.0, 0.82, 0.45];         // how people show up on the map
 const LEGENDS = {
@@ -40,6 +44,10 @@ const LEGENDS = {
   temp: ["Temperature today", "−40 °C", "+45 °C"],
   rain: ["Rain this year vs. normal", "−50%", "+50%"],
   people: ["People per cell (~16 km²)", "0", "20+"],
+  knowledge: ["Techniques known per person (average)", "0", "10"],
+  stone: ["Flint (knappable stone)", "none", "plenty"],
+  clay: ["Clay", "none", "plenty"],
+  wood: ["Wood", "none", "plenty"],
 };
 
 function ramp(name, t, out) {
@@ -81,6 +89,12 @@ async function loadTerrain() {
   S.elev = new Int16Array(buf.slice(0, S.N * 2));
   S.biome = new Uint8Array(buf, S.N * 2, S.N);
   S.water = new Uint8Array(buf, S.N * 3, S.N);
+  const mats = buf.byteLength >= S.N * 7;            // older servers didn't send materials
+  S.mat = {
+    stone: mats ? new Uint8Array(buf, S.N * 4, S.N) : new Uint8Array(S.N),
+    clay: mats ? new Uint8Array(buf, S.N * 5, S.N) : new Uint8Array(S.N),
+    wood: mats ? new Uint8Array(buf, S.N * 6, S.N) : new Uint8Array(S.N),
+  };
   // Hill-shading for the flat map: light from the north-west.
   S.shade = new Float32Array(S.N);
   for (let y = 0; y < S.H; y++) for (let x = 0; x < S.W; x++) {
@@ -99,7 +113,7 @@ async function loadFrame() {
   const r = await fetch("/api/frame");
   const tick = +r.headers.get("X-Tick");
   const buf = await r.arrayBuffer();
-  if (buf.byteLength !== S.N * 7) return;          // world switched mid-flight
+  if (buf.byteLength !== S.N * 8) return;          // world switched mid-flight
   S.frame = new Uint8Array(buf);
   S.tick = tick;
   paint();
@@ -128,8 +142,14 @@ function cellColor(i, out) {
       if (snow > 0) mix(out, SNOW, Math.min(1, snow * 2.5), out);
     }
   } else {
-    const k = { plants: 0, grazers: 1, predators: 2, temp: 4, rain: 5, people: 6 }[layer];
-    const v = layer === "people" ? Math.min(1, Math.sqrt(f[k * S.N + i] / 20)) : f[k * S.N + i] / 255;
+    let v;
+    if (S.mat[layer]) v = S.mat[layer][i] / 255;
+    else {
+      const k = { plants: 0, grazers: 1, predators: 2, temp: 4, rain: 5, people: 6, knowledge: 7 }[layer];
+      v = layer === "people" ? Math.min(1, Math.sqrt(f[k * S.N + i] / 20))
+        : layer === "knowledge" ? (f[6 * S.N + i] ? 0.02 + f[k * S.N + i] / 250 : 0)
+        : f[k * S.N + i] / 255;
+    }
     ramp(layer, v, out);
   }
   if (S.water[i] === 1 && (layer === "natural" || layer === "biome")) mix(out, RIVER, 0.85, out);
@@ -421,6 +441,8 @@ function renderPerson(p) {
     </div>
     ${kv(rows)}
     <h4>Children (${p.children.length})</h4><div class="kids">${kids}</div>
+    ${p.knows ? `<h4>Knows how to make (${p.knows.length})</h4>${p.knows.length ? kv(p.knows.map((k) => [k.name, bar(k.skill)])) : '<div class="muted small">nothing yet</div>'}` : ""}
+    ${p.carrying && p.carrying.length ? `<h4>Carrying</h4><div class="small">${p.carrying.map(escapeHtml).join(" · ")}</div>` : ""}
     ${traits.length ? `<h4>Inherited traits</h4>${kv(traits)}` : ""}
     <p class="muted small">People have no names yet — names need a language, and language hasn't been invented.</p>`;
 }
@@ -480,10 +502,10 @@ function fmt(v) {
   return v >= 10 ? Math.round(v) + "" : v.toFixed(1);
 }
 
-const TRAIT_COLORS = { size: "#e4e7e5", insulation: "#6fb3e0", fertility: "#e07a9f", longevity: "#b39ddb", wanderlust: "#e2b65c", sociability: "#7bc96f" };
+const TRAIT_COLORS = { size: "#e4e7e5", insulation: "#6fb3e0", fertility: "#e07a9f", longevity: "#b39ddb", wanderlust: "#e2b65c", sociability: "#7bc96f", curiosity: "#5fd3c4" };
 async function refreshCharts() {
   const traitNames = Object.keys(TRAIT_COLORS).map((t) => "trait_" + t).join(",");
-  const m = await api(`/api/metrics?names=grazers,predators,vegetation_pct,drought_area_pct,population,births_per_year,deaths_per_year,${traitNames}&points=400`);
+  const m = await api(`/api/metrics?names=grazers,predators,vegetation_pct,drought_area_pct,population,births_per_year,deaths_per_year,techniques_known,techniques_per_person,${traitNames}&points=400`);
   const s = m.series, css = getComputedStyle(document.documentElement);
   const hasPeople = (s.population || []).length > 0;
   $("peopleCharts").hidden = !hasPeople;
@@ -498,6 +520,15 @@ async function refreshCharts() {
       data: (s["trait_" + t] || []).map(([k, v]) => [k, t === "size" ? (v - 0.6) / 0.8 : v]),
     })), m.days_per_year, { ymax: 1 });
   }
+  const hasKnowledge = (s.techniques_known || []).length > 0;
+  $("knowledgeCard").hidden = !hasKnowledge;
+  if (hasKnowledge) {
+    lineChart($("chartKnowledge"), [
+      { label: "techniques anyone knows", color: "#9ec5ff", data: s.techniques_known || [] },
+      { label: "known per person", color: "#5fd3c4", data: s.techniques_per_person || [] },
+    ], m.days_per_year, { ymax: 10 });
+    refreshKnowledge();
+  }
   lineChart($("chartPop"), [
     { label: "grazers", color: css.getPropertyValue("--grazer"), data: s.grazers || [] },
     { label: "predators ×10", color: css.getPropertyValue("--predator"), data: (s.predators || []).map(([t, v]) => [t, v * 10]) },
@@ -510,7 +541,7 @@ async function refreshCharts() {
 
 async function refreshHistory() {
   const ev = await api("/api/events?limit=120");
-  $("history").innerHTML = ev.map((e) => `<li class="${/EXTINCT|FAMINE|PEOPLE|NEW_LAND|FIRST_BIRTH|GROUPS|CREATED|POPULATION/.test(e.type) ? "major" : ""}">${escapeHtml(e.title)}</li>`).join("")
+  $("history").innerHTML = ev.map((e) => `<li class="${/EXTINCT|FAMINE|PEOPLE|NEW_LAND|FIRST_BIRTH|GROUPS|CREATED|POPULATION|DISCOVERY|LOST/.test(e.type) ? "major" : ""}">${escapeHtml(e.title)}</li>`).join("")
     || `<li class="muted">Nothing notable yet.</li>`;
 }
 const escapeHtml = (t) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -581,11 +612,41 @@ window.addEventListener("keydown", (e) => {
   if (e.code === "Space" && !["INPUT", "SELECT"].includes(document.activeElement.tagName)) { e.preventDefault(); $("btnPlay").click(); }
 });
 
+async function refreshKnowledge() {
+  const k = await api("/api/knowledge");
+  if (!k.enabled) return;
+  const order = { known: 0, lost: 1, undiscovered: 2 };
+  const rows = [...k.techniques].sort((a, b) => order[a.status] - order[b.status]);
+  $("techList").innerHTML = rows.map((t) => {
+    const pct = k.population ? Math.round(100 * t.knowers / k.population) : 0;
+    const when = t.status === "known" ? `${pct}% know it` + (t.carrying !== null ? ` · ${t.carrying} carry one` : "")
+      : t.status === "lost" ? `lost in year ${t.lost_year}` : "never discovered";
+    const first = t.first_year !== null && t.first_year !== undefined ? `first: year ${t.first_year} by <a href="#" data-person="${t.first_by}">#${t.first_by}</a>` : "";
+    return `<li class="tech ${t.status}" title="${escapeHtml(t.does)} · needs ${t.needs.join(" + ")}">
+      <div class="tname">${escapeHtml(t.name)}</div><div class="tstat">${when}</div>
+      <div class="tsub">${first}${t.times_lost ? ` · lost ${t.times_lost}×` : ""}</div></li>`;
+  }).join("");
+}
+$("techList").addEventListener("click", (e) => {
+  const a = e.target.closest("[data-person]");
+  if (a) { e.preventDefault(); showPerson(+a.dataset.person); }
+});
+
 // Worlds dialog
 $("btnWorlds").onclick = async () => {
   const { current, worlds } = await api("/api/worlds");
   $("worldList").innerHTML = worlds.map((w) => `<li><div>${escapeHtml(w.name)}<div class="meta">seed ${w.seed} · created ${w.created_utc.slice(0, 10)}</div></div>
-    ${w.id === current ? `<span class="muted small">open</span>` : `<button type="button" data-open="${w.id}">Open</button>`}</li>`).join("");
+    <div class="row-btns">${w.id === current ? `<span class="muted small">open</span>` : `<button type="button" data-open="${w.id}">Open</button>`}
+    <button type="button" class="danger" data-delete="${w.id}" data-name="${escapeHtml(w.name)}">Delete</button></div></li>`).join("");
+  $("worldList").querySelectorAll("[data-delete]").forEach((b) => (b.onclick = async () => {
+    if (!confirm(`Delete "${b.dataset.name}" permanently?\n\nIts whole history and every save will be erased. This can't be undone.`)) return;
+    const before = S.worldId;
+    await api("/api/worlds/delete", { id: b.dataset.delete });
+    toast(`Deleted "${b.dataset.name}".`);
+    $("worldsDialog").close();
+    applyStatus(await api("/api/status"));
+    if (S.status.world.id !== before) { await loadTerrain(); await Promise.all([loadFrame(), refreshCharts(), refreshHistory()]); }
+  }));
   $("worldList").querySelectorAll("[data-open]").forEach((b) => (b.onclick = async () => {
     applyStatus(await api("/api/worlds/open", { id: b.dataset.open }));
     $("worldsDialog").close(); await loadTerrain(); await Promise.all([loadFrame(), refreshCharts(), refreshHistory()]);

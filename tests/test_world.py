@@ -186,8 +186,8 @@ class TestRunnerAndServer(unittest.TestCase):
                     return json.loads(r.read())
 
             self.assertEqual(json.loads(get("/api/status"))["world"]["width"], 64)
-            self.assertEqual(len(get("/api/terrain")), 64 * 64 * 4)
-            self.assertEqual(len(get("/api/frame")), 64 * 64 * 7)
+            self.assertEqual(len(get("/api/terrain")), 64 * 64 * 7)
+            self.assertEqual(len(get("/api/frame")), 64 * 64 * 8)
             self.assertEqual(post("/api/control", {"action": "step", "days": 30})["tick"], 30)
             self.assertIn("biome", json.loads(get("/api/cell?x=32&y=32")))
             self.assertIn(b"<html", get("/").lower())

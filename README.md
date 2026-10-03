@@ -6,7 +6,9 @@ simple rules, instead of being scripted.
 
 > **North star:** define the rules of the universe, not the civilization that emerges from it.
 
-**Stage 2: People** is here. On top of the living landscape from Stage 1
+**Stage 3: Learning** is here — see [About knowledge](#about-knowledge) below.
+
+**Stage 2: People** (also included): On top of the living landscape from Stage 1
 (continents, rivers, climate, seasons, droughts, vegetation, grazing herds,
 predators) there are now individual early humans. They start as 60 people in
 one mild, green place beside fresh water, with nothing: no language, tools,
@@ -105,12 +107,53 @@ famines, which lands get settled — comes out of those rules.
 | longevity | slower ageing | more food to maintain the body |
 | wanderlust | finding new land | more aimless movement |
 | sociability | staying near others | crowding |
+| curiosity | discovering things | less time foraging |
 
 People don't have names: names need a language, and language hasn't been
 invented yet (Stage 4). They're known by number.
 
 Worlds created before Stage 2 have no people and keep running exactly as they
 did. To see people, create a **new world** from the Worlds button.
+
+## About knowledge
+
+The rule: **hard-code the chemistry, not the tech tree.** The land holds
+materials — flint, wood, clay, fibre (from plants) and hides (from herds). The
+world's physics says what those materials *can* become, and what the results
+physically do:
+
+| Technique | Needs | Does |
+|---|---|---|
+| Flaked stone edge | flint | cuts: gathering & hunting +15% |
+| Fire-making | wood | warmth, cooking (+15% food), keeps predators away |
+| Twisted cord | fibre | binds things |
+| Digging stick | wood + stone edge | gathering +25% |
+| Hafted spear | wood + stone edge + cord | hunting +60%, safer from predators |
+| Woven basket | fibre + cord | gathering +20% |
+| Sewn hide clothing | hide + stone edge + cord | cold felt ~6 °C less |
+| Fired clay pot | clay + fire | carries water: thirst builds half as fast |
+| Hide shelter | wood + hide + cord | cold felt ~3 °C less, safer in harsh seasons |
+| Snare trap | cord + wood | extra food without chasing herds |
+
+Nobody starts out knowing any of it. Adults **experiment** with whatever is
+around them (more often if they inherited high **curiosity** — which costs
+foraging time); most combinations do nothing, and combining three things is
+harder than one. Once someone knows a technique they **practise** it and get
+better, and people nearby can **learn** it from them (children learn
+fastest, skilled teachers are easier to copy). Things they make **wear out**,
+so living far from flint means losing your stone tools.
+
+Knowledge **fades if it isn't practised**, and it's **lost** when nobody
+living knows it — a group that moves away from clay forgets pottery. It can be
+rediscovered later, by anyone. The Knowledge panel shows each technique's
+status, when and by whom it was first worked out, and how often it's been lost.
+
+## Deleting worlds
+
+**Worlds → Delete** next to any world erases it — its history and every save
+— permanently, after you confirm. If you delete the world that's open, the
+viewer switches to your newest other world (or makes a fresh one if none is
+left). To start completely fresh: create a new world, then delete the rest.
 
 ## Settings — the laws of physics
 
@@ -159,6 +202,7 @@ aworld/
   climate.py   temperature, rainfall, seasons, wet/dry years
   ecology.py   plants → grazers → predators, snow
   people.py    individual humans: senses, movement, food, water, family, birth, death
+  knowledge.py materials, what they can become, and discovering/teaching/forgetting it
   observer.py  measures the world and writes history (read-only)
   storage.py   checkpoints, thinning, storage cap, history database
   runner.py    keeps the world ticking in the background
@@ -185,7 +229,7 @@ Design rules the code follows:
 |---|---|---|
 | **1. The World** ✅ | terrain, rivers, climate, seasons, plants & animals, save/rewind, 3D viewer | a living landscape |
 | **2. People** ✅ | needs, foraging, aging, births, families, death, inherited traits | bands surviving or starving |
-| 3. Learning | skills, imitation, material "chemistry", tools, knowledge that can be lost | discoveries spreading and dying out |
+| **3. Learning** ✅ | skills, imitation, material "chemistry", tools, knowledge that can be lost | discoveries spreading and dying out |
 | 4. Language | invented words, shared vocabularies, dialects | groups that drift apart in speech |
 | 5. Society | sharing, reputation, conflict, group identity | bands forming, splitting, allying |
 | 6. Settling | storage, replanting, shelter, building | first camps that stop moving |

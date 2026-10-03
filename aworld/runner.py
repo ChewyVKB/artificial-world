@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import load_config
+from . import knowledge as kn
 from . import people as ppl
 from .ecology import BIOMES
 from .observer import GRAZERS_PER_UNIT, PREDATORS_PER_UNIT, Observer
@@ -230,12 +231,17 @@ class Runner:
             }
 
     def terrain_bytes(self) -> bytes:
-        """Unchanging map layers: elevation (int16 metres), biome (uint8), water (uint8: 1 river, 2 lake)."""
+        """Unchanging map layers: elevation (int16 metres), biome (uint8), water (uint8: 1 river, 2 lake),
+        then flint, clay and wood (uint8 each)."""
         with self.lock:
             s = self.world.static
             elev = np.clip(np.round(s["elevation"]), -32768, 32767).astype("<i2")
             water = (s["river"].astype(np.uint8) + 2 * s["lake"].astype(np.uint8))
-            return elev.tobytes() + s["biome"].astype(np.uint8).tobytes() + water.tobytes()
+            mats = b""
+            for key in ("stone_c", "clay_c", "wood_c"):        # where materials lie (0..255)
+                m = self.world.field(np.clip(s[key], 0, 1) * 255) if key in s else np.zeros(self.world.shape)
+                mats += np.round(m).astype(np.uint8).tobytes()
+            return elev.tobytes() + s["biome"].astype(np.uint8).tobytes() + water.tobytes() + mats
 
     def frame_bytes(self) -> bytes:
         """Changing layers, each one byte per cell:
@@ -256,6 +262,7 @@ class Runner:
                 np.clip((w.temperature_map() + 40) / 85 * 255, 0, 255),
                 q(st["anomaly"], -0.5, 0.5),
                 self._people_layer(),
+                self._knowledge_layer(),
             ]
             return b"".join(np.round(l).astype(np.uint8).tobytes() for l in layers)
 
@@ -266,6 +273,59 @@ class Runner:
             counts = np.bincount(w.state["people"]["pos"], minlength=w.static["cells"].size)
             out[w.static["cells"]] = np.minimum(counts, 255)
         return out.reshape(w.shape)
+
+    def _knowledge_layer(self) -> np.ndarray:
+        """Average number of techniques known by the people in each cell (×25, as a byte)."""
+        w = self.world
+        out = np.zeros(w.shape[0] * w.shape[1])
+        p = w.state.get("people")
+        if p is not None and p["id"].size and kn.enabled(w.cfg):
+            k = p["known"].astype(np.int64)
+            pop = np.zeros(p["id"].size)
+            for r in range(kn.R):
+                pop += (k >> r) & 1
+            ncell = w.static["cells"].size
+            tot = np.bincount(p["pos"], pop, minlength=ncell)
+            cnt = np.bincount(p["pos"], minlength=ncell)
+            out[w.static["cells"]] = np.where(cnt > 0, np.minimum(tot / np.maximum(cnt, 1) * 25, 255), 0)
+        return out.reshape(w.shape)
+
+    def knowledge(self) -> dict:
+        """The world's techniques: who knows them, when they were found or lost."""
+        with self.lock:
+            w = self.world
+            if not (w.has_people and kn.enabled(w.cfg)):
+                return {"enabled": False, "techniques": []}
+            p = w.state["people"]
+            counts = kn.knowers(p)
+            tech = self.observer.memory.get("tech", {})
+            out = []
+            for r, rec in enumerate(kn.RECIPES):
+                t = tech.get(rec["key"], {})
+                carrying = int(((p["items"] >> np.uint32(r)) & 1).sum()) if rec["lasts"] else None
+                status = "known" if counts[r] else ("lost" if t else "undiscovered")
+                out.append({"key": rec["key"], "name": rec["name"], "does": rec["does"], "needs": list(rec["needs"]),
+                            "knowers": int(counts[r]), "carrying": carrying, "status": status,
+                            "first_year": t.get("first_year"), "first_by": t.get("first_by"),
+                            "lost_year": t.get("lost_year"), "times_lost": t.get("times_lost", 0)})
+            return {"enabled": True, "population": int(p["id"].size), "techniques": out}
+
+    def delete_world(self, world_id: str) -> str:
+        """Delete a world for good. If it's the open one, switch to another (or a fresh world) first.
+        Returns the id of the world now open."""
+        import shutil
+        target = self.worlds_dir / world_id
+        if not (target / "world.json").exists() or target.resolve().parent != self.worlds_dir.resolve():
+            raise ValueError(f"no world called {world_id!r}")
+        with self.lock:
+            if self.store.meta["id"] == world_id:
+                others = [m for m in list_worlds(self.worlds_dir) if m["id"] != world_id]
+                if others:
+                    self.open_world(max(others, key=lambda m: m["created_utc"])["id"])
+                else:
+                    self.create_world(name="New World")
+            shutil.rmtree(target)
+            return self.store.meta["id"]
 
     def _people_summary(self) -> dict | None:
         w = self.world
@@ -329,6 +389,11 @@ class Runner:
                     "born_year": int(p["birth"][i]) // w.dpy,
                     "traits": {g: round(float(p["genes"][i, k]), 3) for k, g in enumerate(ppl.GENES)},
                 }
+                if kn.enabled(w.cfg):
+                    info["knows"] = [{"name": rec["name"], "skill": round(float(p["skill"][i, r]), 2)}
+                                     for r, rec in enumerate(kn.RECIPES) if int(p["known"][i]) >> r & 1]
+                    info["carrying"] = [rec["name"] for r, rec in enumerate(kn.RECIPES)
+                                        if rec["lasts"] and int(p["items"][i]) >> r & 1]
                 info["age"] = round(age, 1)
             elif rec and rec["birth_tick"] <= w.tick:
                 info = {"id": pid, "alive": False, "sex": "female" if rec["sex"] == ppl.FEMALE else "male",

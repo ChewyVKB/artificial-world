@@ -56,6 +56,13 @@ scouting_radius = 10         # how far (cells, ~4 km each) people know the land 
 travel_cells_per_day = 3     # how far a household walks in a day when moving camp
 move_when_food_below = 1.5   # move camp when local food per person drops below this
 
+[knowledge]
+# Discovering, practising and teaching techniques. Worlds created without this
+# section have no learning. What CAN be made is fixed by the world's materials
+# (see aworld/knowledge.py); whether anyone ever figures it out is up to them.
+experiment_rate = 0.0003     # daily chance an adult tinkers with what's around them (scaled by curiosity)
+learn_rate = 0.01            # daily chance someone picks up a technique from a person nearby
+
 [storage]
 checkpoint_every_days = 360  # save a full snapshot this often (360 = once per year)
 max_storage_gb = 100         # hard cap; old snapshots are thinned to stay under it

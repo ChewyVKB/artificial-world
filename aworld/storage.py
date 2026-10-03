@@ -32,7 +32,7 @@ from .world import DYNAMIC_FIELDS, World, add_derived
 STATIC_SAVE = ("elevation", "ocean", "lake", "river", "flow", "latitude", "annual_temp",
                "annual_rain", "swing", "habitable", "biome", "plant_capacity", "cells",
                "neighbours", "annual_temp_c", "annual_rain_c", "swing_c", "hemisphere_c", "capacity_c",
-               "neighbours8", "compact_of", "water_c", "water_dist_c", "cy_c", "cx_c")
+               "neighbours8", "compact_of", "water_c", "water_dist_c", "cy_c", "cx_c", "stone_c", "clay_c", "wood_c")
 
 _CKPT = re.compile(r"^t(\d{12})\.npz$")
 
@@ -86,7 +86,7 @@ class WorldStore:
             # Not fatal: the world still loads, but replaying old history may not match exactly.
             print(f"[storage] warning: world made with sim {meta['sim_version']}, running {SIM_VERSION}")
         with np.load(self.root / "static.npz") as z:
-            static = add_derived({k: z[k] for k in z.files})
+            static = add_derived({k: z[k] for k in z.files}, meta["seed"])
         ticks = self.checkpoint_ticks()
         if not ticks:
             raise FileNotFoundError(f"no checkpoints in {self.root}")

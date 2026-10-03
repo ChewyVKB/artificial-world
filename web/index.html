@@ -53,6 +53,10 @@
         <option value="temp">Temperature</option>
         <option value="rain">Rain vs. normal</option>
         <option value="people">People</option>
+        <option value="knowledge">Knowledge</option>
+        <option value="stone">Flint</option>
+        <option value="clay">Clay</option>
+        <option value="wood">Wood</option>
         <option value="biome">Biomes</option>
       </select>
     </label>
@@ -85,6 +89,13 @@
     <section class="card" id="inspector">
       <h3>Inspector</h3>
       <div id="inspectBody"><div class="muted">Click anywhere on the land — or on a cluster of people.</div></div>
+    </section>
+
+    <section class="card" id="knowledgeCard" hidden>
+      <h3>Knowledge <small>what people have worked out</small></h3>
+      <canvas class="chart" id="chartKnowledge" height="110"></canvas>
+      <ul class="techs" id="techList"></ul>
+      <div class="muted small">What <em>can</em> be made is fixed by the world's materials. Whether anyone figures it out — and keeps it — is up to them. Hover for details.</div>
     </section>
 
     <div id="peopleCharts" hidden>
