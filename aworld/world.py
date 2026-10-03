@@ -193,6 +193,16 @@ def add_derived(static: dict, seed: int | None = None) -> dict:
             dist[nxt] = d
             frontier = nxt
         static["water_dist_c"] = dist
+    if "coast_c" not in static:
+        def near(mask, r):
+            out = mask.copy()
+            for dy in range(-r, r + 1):
+                for dx in range(-r, r + 1):
+                    out |= np.roll(np.roll(mask, dy, 0), dx, 1)
+            return out
+        static["coast_c"] = near(static["ocean"], 2).ravel()[cells]
+        static["lake_c"] = near(static["lake"], 1).ravel()[cells]
+        static["mount_c"] = near(static["elevation"] > 1500, 3).ravel()[cells]
     if "stone_c" not in static and seed is not None:
         from .knowledge import material_fields
         static.update(material_fields(static, seed))

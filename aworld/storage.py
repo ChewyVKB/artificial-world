@@ -32,7 +32,8 @@ from .world import DYNAMIC_FIELDS, World, add_derived
 STATIC_SAVE = ("elevation", "ocean", "lake", "river", "flow", "latitude", "annual_temp",
                "annual_rain", "swing", "habitable", "biome", "plant_capacity", "cells",
                "neighbours", "annual_temp_c", "annual_rain_c", "swing_c", "hemisphere_c", "capacity_c",
-               "neighbours8", "compact_of", "water_c", "water_dist_c", "cy_c", "cx_c", "stone_c", "clay_c", "wood_c")
+               "neighbours8", "compact_of", "water_c", "water_dist_c", "cy_c", "cx_c", "stone_c", "clay_c", "wood_c",
+               "coast_c", "lake_c", "mount_c")
 
 _CKPT = re.compile(r"^t(\d{12})\.npz$")
 

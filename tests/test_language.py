@@ -109,6 +109,47 @@ class TestDrift(unittest.TestCase):
         self.assertGreater(changed, 0)
 
 
+class TestDialectsAndAccents(unittest.TestCase):
+    def test_accent_changes_sounds_regularly(self):
+        rng = np.random.default_rng(9)
+        words = lg.random_words(rng, 200, lengths=(2, 4))
+        k_to_g = next(i for i, r in enumerate(lg.ACCENT_RULES) if r == ("onset", "k", "g"))
+        shifted = lg.apply_accent(words, np.full(words.size, 1 << k_to_g))
+        for a, b in zip(words, shifted):
+            sa, sb = lg.word_str(a), lg.word_str(b)
+            self.assertEqual(sa.replace("k", "g"), sb)       # every k, and only k, becomes g
+
+    def test_small_differences_are_dialects_not_languages(self):
+        w = World.create(cfg())
+        p = w.state["people"]
+        n = p["id"].size
+        rng = np.random.default_rng(11)
+        a = lg.random_words(rng, lg.M, lengths=(2, 4))
+        near = a.copy()
+        near[:32] = lg.random_words(rng, 32, lengths=(2, 4))  # about half the words still shared
+        half = n // 2
+        p["lex"][:half], p["lex"][half:] = a, near
+        p["pos"][:half], p["pos"][half:] = 0, w.static["cells"].size - 1
+        found = lg.detect(p, lg.region_labels(w))
+        self.assertEqual(len(found), 1)                       # one language…
+        self.assertEqual(len(found[0]["dialects"]), 2)         # …with two dialects
+
+    def test_language_keeps_its_name_as_it_changes(self):
+        w = World.create(cfg())
+        p = w.state["people"]
+        rng = np.random.default_rng(12)
+        p["lex"][:] = lg.random_words(rng, lg.M, lengths=(2, 4))
+        obs = Observer()
+        for _ in range(CONFIRM_YEARS):
+            obs._yearly_language(w)
+        name = obs.living_languages()[0]["name"]
+        for step in range(6):                                  # words change, a few at a time
+            p["lex"][:, step * 4:(step + 1) * 4] = lg.random_words(rng, 4, lengths=(2, 4))
+            for _ in range(3):
+                obs._yearly_language(w)
+        self.assertEqual([l["name"] for l in obs.living_languages()], [name])
+
+
 class TestLanguageSplit(unittest.TestCase):
     def test_isolated_groups_become_separate_languages(self):
         """Two groups with unrelated vocabularies are two languages, and the census
@@ -141,7 +182,7 @@ class TestLanguageSplit(unittest.TestCase):
         census(obs2, CONFIRM_YEARS)
         self.assertEqual(len(obs2.living_languages()), 1)
         drifted = a.copy()
-        drifted[:14] = b[:14]                                # a bit over half its words have changed
+        drifted[:45] = b[:45]                                # three quarters of its words have changed
         p["lex"][half:] = drifted
         self.assertNotIn("LANGUAGE_SPLIT", census(obs2, 1))  # not announced on a single census…
         self.assertIn("LANGUAGE_SPLIT", census(obs2, CONFIRM_YEARS))   # …only once it lasts

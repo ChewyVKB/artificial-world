@@ -176,40 +176,57 @@ status, when and by whom it was first worked out, and how often it's been lost.
 ## About language
 
 Nothing about any actual language is built in — only the *ability* to make
-sounds, link a sound to something two people are both looking at, and copy
-each other. Every word in the world was coined by someone in it.
+sounds, link a sound to something two people are both paying attention to, and
+copy each other. Every word in the world was coined by someone in it.
 
-- **Talking.** People in the same place talk about what matters right there:
-  the river, a herd, a predator, the cold, a technique they know (26 things in
-  all). If a speaker has no word for it, they may make one up.
+- **Talking.** People in the same place talk, several times a day, about what
+  matters there and then: the river, a herd, a predator, the cold, the sun and
+  the night, being hungry or sick, a stranger, a technique they know — 60 things
+  so far. The list only grows: whenever the world gains something new to talk
+  about (a new invention, later), people can coin words for it too.
 - **Spreading.** A listener who uses a different word may switch to the
   speaker's (children nearly always do). Words nobody uses are forgotten.
-- **Changing.** Copying isn't perfect — now and then a sound slips (*ka*→*ga*,
-  *u*→*o*), and occasionally someone coins a new way of saying an old thing.
-  Who you happen to talk to decides which version wins, so a group's speech
-  slowly drifts. Groups that rarely meet drift apart: first dialects, then
-  separate languages.
+- **Changing.** Copying isn't perfect: now and then a sound slips, and now and
+  then someone coins a new way of saying an old thing. Who you happen to talk
+  to decides which version wins, so a community's words slowly turn over.
+- **Accents.** Sound change is also *regular*, as in real languages: a person
+  may start saying every *k* as *g*, or every *a* as *e*. Accents are picked up
+  from the people around you (children most of all), so a whole region can
+  come to share one. Related languages end up sounding different while staying
+  recognisably related (*kele* / *gele*).
 - **Mattering.** People who share words teach each other techniques far more
-  easily, and a shared word for "predator" lets them warn each other (fewer
-  deaths). People prefer to camp among those they can understand. A new
-  heritable trait, **speech**, makes people talk more and copy words more
-  faithfully — at the cost of a hungrier brain. Whether it's worth it is up to
-  evolution.
+  easily, and a shared word for "predator" means warnings and fewer deaths.
+  People prefer to camp among those they can understand. The heritable trait
+  **speech** makes people talk more and copy words more faithfully, at the cost
+  of a hungrier brain.
 - **Names.** Once a mother has a few words she names her children, using the
-  sounds of her own speech. People without names are shown by number.
+  sounds of her own speech.
 
-**Languages are found by the observer, not declared by the simulation.** Each
-year it listens region by region (~40 km squares), groups regions that
-understand each other (sharing at least half their words, allowing for a
-slipped sound), and compares the result with last year's. A new language is
-only announced once it has held together for 5 years, and a language is only
-declared dead after 5 years without a trace. A language is named after its own
-word for "us" (or, if that's taken, its next free word).
+**Languages are identified by the observer, not declared by the simulation.**
+Each year it listens region by region (~40 km squares) and measures how often
+people from two regions use the same word for the same thing:
+
+| Shared | Means |
+|---|---|
+| more than ~55% | the same **dialect** |
+| ~30–55% | different **dialects** of one language — they can still understand each other |
+| less than ~30% | different **languages** — they can't |
+
+A language keeps its identity (and name) for as long as it's spoken in roughly
+the same places, however much it changes. A new language is announced only when
+a group can no longer understand the people it came from, and only after that
+has lasted 5 years; a language is declared dead after 5 years without speakers.
+Each language is named after its own word for "us" — or, if its speakers
+haven't settled on one, a name made from its own most typical sounds. Dialects
+are named by where they're spoken: *Eastern Bo*, *Coastal Bo*, *Highland Bo*.
+
+Expect dialects within a century or two, and separate languages only after many
+centuries apart — about as slow, relative to generations, as in real history.
 
 In the viewer: the **Languages** panel lists every language with its speakers,
-where it came from, and its dictionary; **Show → Languages** maps where each is
-spoken; a person's page shows their name, which language they speak, and every
-word they know.
+dialects (and the words that set them apart), where it came from, and its
+words; **Show → Languages** maps where each is spoken; a person's page shows
+their name, language and dialect, accent, and every word they know.
 
 ## Deleting worlds
 
@@ -289,13 +306,26 @@ Design rules the code follows:
 
 ## Roadmap
 
+The goal is open-ended: people who keep inventing — tools, fire for many uses,
+camps, houses, farming, metals, machines — and, if their world allows it,
+towns, cities and transport. Each stage adds *physics* (what is possible),
+never outcomes.
+
 | Stage | Adds | You'll see |
 |---|---|---|
 | **1. The World** ✅ | terrain, rivers, climate, seasons, plants & animals, save/rewind, 3D viewer | a living landscape |
 | **2. People** ✅ | needs, foraging, aging, births, families, death, inherited traits | bands surviving or starving |
-| **3. Learning** ✅ | skills, imitation, material "chemistry", tools, knowledge that can be lost | discoveries spreading and dying out |
-| **4. Language** ✅ | invented words, shared vocabularies, dialects | groups that drift apart in speech |
-| 5. Society | sharing, reputation, conflict, group identity | bands forming, splitting, allying |
-| 6. Settling | storage, replanting, shelter, building | first camps that stop moving |
-| 7. Civilization | property, trade, specialization, leadership | villages, chiefdoms — or collapse |
-| 8. History | timelines, family trees, causal tracing, branching worlds | "why did this happen?" from data |
+| **3. Learning** ✅ | skills, imitation, a first set of techniques, knowledge that can be lost | discoveries spreading and dying out |
+| **4. Language** ✅ | invented words, accents, dialects, languages, names | groups that drift apart in speech |
+| 5. Open-ended making | materials with physical properties; processes (strike, cut, heat, mix, shape, bind…); things built from other things, without limit; fire temperatures; uses that follow from properties; every invention gets words | an ever-growing, different set of inventions in every world |
+| 6. Building & settling | structures on the map built from real materials (windbreaks → huts → houses → storehouses, walls); staying put; storage | the first camps, then villages, visible in 3D |
+| 7. Farming & herding | plants and animals that change when people replant and tame them | fields and herds around settlements |
+| 8. Society | memory of others, reputation, sharing, grudges, group identity, leadership | bands, alliances, feuds, chiefs — or none |
+| 9. Specialisation & trade | skills that pay off, exchange between people and groups | crafts, markets, maybe money |
+| 10. Metals & machines | high-temperature physics (smelting, alloys), levers, wheels, boats | metalworking, carts, river and sea travel |
+| 11. Towns & cities | dense building, roads worn by traffic, public works, structures limited by material strength | towns, cities, skylines |
+| 12. Power & industry | water, wind and heat as energy; deeper chemistry; more physics as people reach it | mills, engines — wherever they get to |
+| ongoing | speed (a compiled core for big worlds), history and "why did this happen?" tools, experiments that compare worlds | |
+
+Nothing on this list is guaranteed to happen in any given world — that's the
+point. The physics sets what's possible; the people decide what happens.

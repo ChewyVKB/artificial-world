@@ -438,6 +438,7 @@ function renderPerson(p) {
     rows.push(["Age", `${p.age} years`], ["Health", bar(p.health)], ["Fed", bar(p.energy)], ["Water", bar(p.hydration)]);
     if (p.pregnant) rows.push(["", "expecting a child"]);
     if (p.vocabulary) rows.push(["Speaks", p.speaks ? escapeHtml(p.speaks) : (p.vocabulary.length ? "a few words of their own" : "no words yet")]);
+    if (p.accent && p.accent.length) rows.push(["Accent", `<span title="sound rules they speak with">${p.accent.map(escapeHtml).join(", ")}</span>`]);
     rows.push(["Travels with", `${p.household_size} ${p.household_size === 1 ? "person" : "people"}`],
               ["Where", `${p.location.x}, ${p.location.y}`]);
   } else {
@@ -652,8 +653,13 @@ async function refreshLanguages() {
       <details ${S.openLang === l.id ? "open" : ""} data-lang="${l.id}">
         <summary><span class="sw" style="background:rgb(${langColor(l.id).map((v) => v * 255 | 0)})"></span>
           <span class="lname">${escapeHtml(l.name)}</span>
-          <span class="lstat">${l.died_year ? `spoken until year ${l.died_year}` : `${l.speakers.toLocaleString()} speakers · ${l.words.length} words`}</span></summary>
-        <div class="lsub">since year ${l.born_year}${l.parent ? ` · drifted from ${escapeHtml(l.parent)}` : ""}</div>
+          <span class="lstat">${l.died_year ? `spoken until year ${l.died_year}` : `${l.speakers.toLocaleString()} speakers · ${l.words.length} words${l.dialects && l.dialects.length ? ` · ${l.dialects.length} dialects` : ""}`}</span></summary>
+        <div class="lsub">since year ${l.born_year}${l.parent ? ` · descended from ${escapeHtml(l.parent)}` : ""}</div>
+        ${l.dialects && l.dialects.length ? `<div class="dialects">${l.dialects.map((d) => `<div class="dialect">
+            <span class="dname">${escapeHtml(d.name)}</span> <span class="muted">${d.speakers.toLocaleString()} speakers</span>
+            ${d.differences.length ? `<div class="dsub">${d.differences.map((x) =>
+              `says <b>${escapeHtml(x.word)}</b> for ${escapeHtml(x.meaning)} <span class="muted">(not ${escapeHtml(x.standard)})</span>`).join(" · ")}</div>` : ""}
+          </div>`).join("")}</div>` : ""}
         <div class="vocab">${l.words.map((w) => `<span><b>${escapeHtml(w.word)}</b> ${escapeHtml(w.meaning)}</span>`).join("")}</div>
       </details></li>`;
   $("langList").innerHTML = (living.map(row).join("") || `<li class="muted small">No shared language yet — people have only a few words of their own.</li>`)

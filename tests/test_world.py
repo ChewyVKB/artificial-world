@@ -149,6 +149,7 @@ class TestRunnerAndServer(unittest.TestCase):
         time.sleep(1.5)
         self.runner.running = False
         self.runner._stop.set()
+        self.runner._thread.join(timeout=10)
         self.assertGreater(self.runner.world.tick, 30)
         self.assertIsNone(self.runner.error)
 

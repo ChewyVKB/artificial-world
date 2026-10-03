@@ -47,16 +47,36 @@ ONSET_SHIFTS = [("p", "b"), ("p", "m"), ("t", "d"), ("t", "n"), ("t", "s"), ("k"
                 ("l", "r"), ("w", "y"), ("", "h"), ("m", "n"), ("s", "h")]
 VOWEL_SHIFTS = [("a", "e"), ("e", "i"), ("o", "u"), ("a", "o")]
 
+# Accents: regular sound changes. A person with the rule "k→g" says (and so
+# passes on) every k as g. Accents are learned from the people around you, so a
+# whole region can come to share one — which is how related languages end up
+# sounding different from each other.
+ACCENT_RULES = ([("onset", a, b) for a, b in ONSET_SHIFTS] + [("onset", b, a) for a, b in ONSET_SHIFTS]
+                + [("vowel", a, b) for a, b in VOWEL_SHIFTS] + [("vowel", b, a) for a, b in VOWEL_SHIFTS])
+assert len(ACCENT_RULES) <= 32
+
 # ── things people talk about ───────────────────────────────────────────
+# The list only ever grows (new entries go at the end), so words people already
+# have keep their meaning when the world learns about something new.
 MEANINGS = (
     ("people", "us, our people"), ("water", "water"), ("plant", "edible plants"), ("herd", "herd animals"),
     ("predator", "predator, danger"), ("river", "river"), ("rain", "rain"), ("cold", "cold"),
     ("snow", "snow"), ("child", "child"), ("mother", "mother"), ("eat", "eat, food"),
     ("go", "go, travel"), ("stone", "stone"), ("clay", "clay"), ("wood", "wood"),
-) + tuple((f"tech:{r['key']}", r["name"].lower()) for r in RECIPES)
+) + tuple((f"tech:{r['key']}", r["name"].lower()) for r in RECIPES) + (
+    ("sun", "sun"), ("moon", "moon"), ("night", "night"), ("day", "day"), ("sky", "sky"), ("star", "star"),
+    ("wind", "wind"), ("ground", "earth, ground"), ("tree", "tree"), ("fish", "fish"), ("bird", "bird"),
+    ("mountain", "mountain"), ("sea", "sea"), ("lake", "lake"), ("hot", "hot"), ("sick", "sick"),
+    ("hungry", "hungry"), ("thirsty", "thirsty"), ("old", "old"), ("dying", "dying"), ("father", "father"),
+    ("mate", "mate, partner"), ("stranger", "stranger"), ("i", "I, me"), ("you", "you"), ("give", "give"),
+    ("good", "good"), ("bad", "bad"), ("big", "big"), ("small", "small"), ("one", "one"), ("two", "two"),
+    ("many", "many"), ("sleep", "sleep"),
+)
 M = len(MEANINGS)
 MI = {k: i for i, (k, _) in enumerate(MEANINGS)}
 N_BASE = 16                                  # meanings before the techniques
+ALWAYS = ("people", "water", "plant", "eat", "go", "sun", "moon", "night", "day", "sky", "star", "wind",
+          "ground", "bird", "i", "you", "give", "good", "bad", "big", "small", "one", "two", "many", "sleep")
 
 
 def enabled(cfg: dict) -> bool:
@@ -127,13 +147,40 @@ def _shift(code: int, rng: np.random.Generator) -> int:
     return int(encode(np.array(d)))
 
 
+def apply_accent(words: np.ndarray, accents: np.ndarray) -> np.ndarray:
+    """Pronounce each word with the matching person's accent (their sound rules)."""
+    words = np.asarray(words, dtype=np.int64)
+    if words.size == 0 or not np.any(accents):
+        return words
+    d = digits(words)
+    has = d > 0
+    onset, vowel = (d - 1) // len(VOWELS), (d - 1) % len(VOWELS)
+    acc = np.asarray(accents, dtype=np.int64)[:, None]
+    for r, (kind, a, b) in enumerate(ACCENT_RULES):
+        on = ((acc >> r) & 1).astype(bool) & has
+        if not on.any():
+            continue
+        if kind == "onset":
+            hit = on & (onset == ONSETS.index(a))
+            onset = np.where(hit, ONSETS.index(b), onset)
+        else:
+            hit = on & (vowel == VOWELS.index(a))
+            vowel = np.where(hit, VOWELS.index(b), vowel)
+    d = np.where(has, onset * len(VOWELS) + vowel + 1, 0)
+    return encode(d)
+
+
+def accent_str(accent: int) -> list[str]:
+    return [f"{a or '∅'}→{b or '∅'}" for r, (_, a, b) in enumerate(ACCENT_RULES) if int(accent) >> r & 1]
+
+
 # ── what's worth talking about here, now ───────────────────────────────
 def salient(world, age_y: np.ndarray, temp_c: np.ndarray, rain_mm: np.ndarray) -> np.ndarray:
     p, s, st = world.state["people"], world.static, world.state
     pos = p["pos"]
     n = pos.size
     out = np.zeros((n, M), dtype=bool)
-    for k in ("people", "water", "plant", "eat", "go"):
+    for k in ALWAYS:
         out[:, MI[k]] = True
     out[:, MI["herd"]] = st["grazers"][pos] > 0.02
     out[:, MI["predator"]] = st["predators"][pos] > 0.01
@@ -150,13 +197,48 @@ def salient(world, age_y: np.ndarray, temp_c: np.ndarray, rain_mm: np.ndarray) -
     known = p["known"].astype(np.int64)
     for r in range(len(RECIPES)):
         out[:, N_BASE + r] = (known >> r) & 1
+    if "coast_c" in s:
+        out[:, MI["sea"]] = s["coast_c"][pos]
+        out[:, MI["mountain"]] = s["mount_c"][pos]
+        out[:, MI["lake"]] = s["lake_c"][pos]
+        out[:, MI["fish"]] = s["water_c"][pos] | s["coast_c"][pos]
+    if "wood_c" in s:
+        out[:, MI["tree"]] = s["wood_c"][pos] > 0.2
+    out[:, MI["hot"]] = temp_c[pos] > 28
+    out[:, MI["sick"]] = p["health"] < 0.6
+    out[:, MI["dying"]] = p["health"] < 0.3
+    out[:, MI["hungry"]] = p["energy"] < 0.3
+    out[:, MI["thirsty"]] = p["hydration"] < 0.5
+    out[:, MI["old"]] = age_y > 45
+    out[:, MI["mate"]] = p["partner"] >= 0
+    out[:, MI["father"]] = (age_y < 15) | ((p["sex"] == 1) & (p["partner"] >= 0))
+    # Someone around who calls their people by a different name: a stranger.
+    us = p["lex"][:, MI["people"]].astype(np.int64)
+    named = us > 0
+    if named.any():
+        pairs = np.unique(np.stack([pos[named], us[named]]), axis=1)
+        kinds = np.bincount(pairs[0], minlength=s["cells"].size)
+        out[:, MI["stranger"]] = kinds[pos] > 1
     return out
 
 
 # ── one day of talk ────────────────────────────────────────────────────
 def daily(world, age_y: np.ndarray, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generator) -> list:
-    """Conversations between people in the same place.
+    """A day's talk: several rounds of conversation between people in the same place.
     Returns new words: [(person id, meaning index, word code)]."""
+    out = []
+    for _ in range(int(world.cfg["language"].get("rounds_per_day", 1))):
+        out += _talk(world, age_y, temp_c, rain_mm, rng)
+    p = world.state["people"]
+    # Unused words fade, and are forgotten.
+    p["lexs"] *= 0.9993
+    gone = (p["lexs"] < 0.03) & (p["lex"] > 0)
+    p["lex"][gone] = 0
+    return out
+
+
+def _talk(world, age_y, temp_c, rain_mm, rng) -> list:
+    """One round of conversations."""
     p, lc = world.state["people"], world.cfg["language"]
     n = p["id"].size
     if n < 2:
@@ -179,6 +261,15 @@ def daily(world, age_y: np.ndarray, temp_c: np.ndarray, rain_mm: np.ndarray, rng
         sp, hr = order[L], order[other]
         listening = age_y[hr] >= 1                                  # babies don't pick up words yet
         sp, hr, L = sp[listening], hr[listening], L[listening]
+        # Accents rub off on people (children most), and now and then someone
+        # starts saying a sound a new way.
+        if "accent" in p:
+            acc = p["accent"]
+            catch = rng.random(L.size) < lc.get("accent_rate", 0.01) * np.where(age_y[hr] < 15, 5.0, 1.0)
+            acc[hr[catch]] = acc[sp[catch]]
+            new = np.flatnonzero(rng.random(L.size) < lc.get("accent_innovate", 0.0002))
+            for j in new:
+                acc[sp[j]] ^= np.uint32(1 << int(rng.integers(len(ACCENT_RULES))))
         sal = salient(world, age_y, temp_c, rain_mm)[sp]
         m = np.argmax(rng.random(sal.shape) * sal, axis=1)          # one thing to talk about
         ws = lex[sp, m].astype(np.int64)
@@ -187,6 +278,8 @@ def daily(world, age_y: np.ndarray, temp_c: np.ndarray, rain_mm: np.ndarray, rng
         coin = (ws == 0) & (rng.random(L.size) < lc["invent_rate"] * (0.2 + speech[sp]))
         if coin.any():
             new = random_words(rng, int(coin.sum()))
+            if "accent" in p:
+                new = apply_accent(new, p["accent"][sp[coin]])
             ws[coin] = new
             lex[sp[coin], m[coin]] = new
             strength[sp[coin], m[coin]] = 0.3
@@ -222,15 +315,13 @@ def daily(world, age_y: np.ndarray, temp_c: np.ndarray, rain_mm: np.ndarray, rng
         aw = aw.copy()
         for j in np.flatnonzero(slip):
             aw[j] = _shift(int(aw[j]), rng)
+        if "accent" in p:                       # the listener says it their own way
+            aw = apply_accent(aw, p["accent"][ah])
         lex[ah, am] = aw
         strength[ah, am] = 0.25
         # Saying a word keeps it fresh in the speaker's mind.
         strength[sp, m] = np.minimum(strength[sp, m] + 0.05, 1.0)
 
-    # Unused words fade, and are forgotten.
-    strength *= 0.9993
-    gone = (strength < 0.03) & (lex > 0)
-    lex[gone] = 0
     return invented
 
 
@@ -270,15 +361,18 @@ def name_children(p: dict, mothers: np.ndarray, rng: np.random.Generator) -> np.
 
 
 # ── the observer's view: which languages exist? ───────────────────────
-MIN_GROUP = 5          # people in a group before we look at how it speaks
+# Linguists' rule of thumb: people who share most of their basic words speak
+# dialects of one language; people who share only a minority can't understand
+# each other and speak different languages (which may still be related).
+MIN_GROUP = 5          # people in a region before we listen to how it speaks
 MIN_SPEAKERS = 10
 MIN_VOCAB = 4          # shared words before we call it a language
-SAME_LANGUAGE = 0.5    # groups sharing at least this much vocabulary speak the same language
-MIN_OVERLAP = 4        # meanings both must have words for before we compare at all
-PERSON_MATCH = 0.4     # an individual speaks a language if this much of their vocabulary matches it
-
-
-REGION = 10           # cells (~40 km) per side of the squares we survey speech in
+DIALECT = 0.55         # regions sharing at least this much speak the same dialect
+SAME_LANGUAGE = 0.3    # ...at least this much: the same language (mutually intelligible)
+RELATED = 0.15         # ...at least this much: related languages (a common ancestor shows)
+MIN_OVERLAP = 6        # meanings both must have words for before we compare at all
+PERSON_MATCH = 0.35    # an individual speaks a language if this much of their vocabulary matches it
+REGION = 10            # cells (~40 km) per side of the squares we survey speech in
 
 
 def region_labels(world) -> np.ndarray:
@@ -290,13 +384,19 @@ def region_labels(world) -> np.ndarray:
     return (s["cy_c"][pos] // REGION) * 100000 + s["cx_c"][pos] // REGION
 
 
+def region_centre(label: int) -> tuple[float, float]:
+    """(y, x) in cells of a region's centre."""
+    return ((label // 100000) + 0.5) * REGION, ((label % 100000) + 0.5) * REGION
+
+
 def dictionaries(lex: np.ndarray, labels: np.ndarray, min_share: float = 0.4) -> tuple:
     """Each group's usual word for each meaning (if at least `min_share` of the group use it)."""
     groups, inv, counts = np.unique(labels, return_inverse=True, return_counts=True)
     Gn = groups.size
-    words = np.zeros((Gn, M), dtype=np.int64)
-    share = np.zeros((Gn, M))
-    for m in range(M):
+    m_count = lex.shape[1]
+    words = np.zeros((Gn, m_count), dtype=np.int64)
+    share = np.zeros((Gn, m_count))
+    for m in range(m_count):
         w = lex[:, m].astype(np.int64)
         has = w > 0
         if not has.any():
@@ -316,58 +416,122 @@ def dictionaries(lex: np.ndarray, labels: np.ndarray, min_share: float = 0.4) ->
 def similarity(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Vocabulary similarity between word lists a (X, M) and b (Y, M) → (X, Y).
     Words count as shared if identical, or the same length differing by one sound."""
-    da, db = digits(a)[:, None], digits(b)[None, :]
-    both = (a[:, None] > 0) & (b[None, :] > 0)
-    diff = (da != db).sum(axis=-1)
-    length = (da > 0).sum(axis=-1)
-    close = (diff == 0) | ((diff <= 1) & (length >= 2) & ((da > 0) == (db > 0)).all(axis=-1))
-    n = both.sum(axis=-1)
-    return np.where(n >= MIN_OVERLAP, (close & both).sum(axis=-1) / np.maximum(n, 1), 0.0)
+    a, b = np.asarray(a, dtype=np.int64), np.asarray(b, dtype=np.int64)
+    out = np.zeros((a.shape[0], b.shape[0]))
+    for i0 in range(0, a.shape[0], 256):                 # in blocks, to keep memory small
+        aa = a[i0:i0 + 256]
+        da, db = digits(aa)[:, None], digits(b)[None, :]
+        both = (aa[:, None] > 0) & (b[None, :] > 0)
+        diff = (da != db).sum(axis=-1)
+        length = (da > 0).sum(axis=-1)
+        close = (diff == 0) | ((diff <= 1) & (length >= 2) & ((da > 0) == (db > 0)).all(axis=-1))
+        n = both.sum(axis=-1)
+        out[i0:i0 + 256] = np.where(n >= MIN_OVERLAP, (close & both).sum(axis=-1) / np.maximum(n, 1), 0.0)
+    return out
 
 
-def detect(p: dict, labels: np.ndarray) -> list[dict]:
-    """Languages as an outside linguist would see them: groups that understand
-    each other, with the words they share."""
+def region_similarity(lex: np.ndarray, inv: np.ndarray, regions: np.ndarray) -> np.ndarray:
+    """How well people from two regions understand each other: for every meaning,
+    how often a random speaker from one region and one from the other use the
+    same word — scaled so that a region compared with itself scores 1. (This copes
+    with mixed regions, where newcomers and locals speak differently.)"""
+    keep = np.isin(inv, regions)
+    rows = np.flatnonzero(keep)
+    r_index = np.full(inv.max() + 1, -1)
+    r_index[regions] = np.arange(regions.size)
+    r = r_index[inv[rows]]
+    sizes = np.bincount(r, minlength=regions.size).astype(float)
+    sub = lex[rows].astype(np.int64)
+    m_idx = np.broadcast_to(np.arange(sub.shape[1]), sub.shape)
+    has = sub > 0
+    key = m_idx[has] * WORD_SPACE + sub[has]
+    rr = np.broadcast_to(r[:, None], sub.shape)[has]
+    uk, kinv = np.unique(key, return_inverse=True)
+    F = np.zeros((regions.size, uk.size))
+    np.add.at(F, (rr, kinv), 1.0)
+    F /= np.maximum(sizes, 1)[:, None]
+    S = F @ F.T
+    d = np.sqrt(np.maximum(np.diag(S), 1e-12))
+    return S / d[:, None] / d[None, :]
+
+
+def _agglomerate(sim: np.ndarray, weights: np.ndarray, cuts: tuple) -> list[list[list[int]]]:
+    """Average-linkage clustering. Returns the clusters (lists of item indices) at
+    each threshold in `cuts` (descending)."""
+    n = sim.shape[0]
+    link = sim.astype(float).copy()
+    np.fill_diagonal(link, -1)
+    clusters = {k: [k] for k in range(n)}
+    size = {k: float(weights[k]) for k in range(n)}
+    alive = list(range(n))
+    out = []
+    for cut in cuts:
+        while len(alive) > 1:
+            sub = link[np.ix_(alive, alive)]
+            i, j = np.unravel_index(np.argmax(sub), sub.shape)
+            if sub[i, j] < cut:
+                break
+            a, b = alive[i], alive[j]
+            na, nb = size[a], size[b]
+            link[a, :] = (link[a, :] * na + link[b, :] * nb) / (na + nb)
+            link[:, a] = link[a, :]
+            link[a, a] = -1
+            size[a] = na + nb
+            clusters[a] += clusters.pop(b)
+            alive.remove(b)
+        out.append([list(v) for v in clusters.values()])
+    return out
+
+
+def detect(p: dict, labels: np.ndarray, static: dict | None = None) -> list[dict]:
+    """Languages as an outside linguist would see them, each with its dialects.
+
+    Regions whose speech is nearly the same form a dialect; dialects that can
+    still understand each other form a language."""
     if p["id"].size == 0:
         return []
     groups, inv, counts, words, share = dictionaries(p["lex"], labels)
     big = np.flatnonzero(counts >= MIN_GROUP)
     if big.size == 0:
         return []
-    sim = similarity(words[big], words[big])
-    clusters = {k: [k] for k in range(big.size)}
-    # Average-linkage clustering: keep merging the two most similar clusters while,
-    # on average, their regions still understand each other. (Unlike chaining
-    # neighbour to neighbour, this lets the far ends of a dialect chain become
-    # separate languages once they drift far enough apart.)
-    link = sim.astype(float).copy()
-    np.fill_diagonal(link, -1)
-    alive = list(range(big.size))
-    sizes = {k: 1 for k in alive}
-    while len(alive) > 1:
-        sub = link[np.ix_(alive, alive)]
-        i, j = np.unravel_index(np.argmax(sub), sub.shape)
-        if sub[i, j] < SAME_LANGUAGE:
-            break
-        a, b = alive[i], alive[j]
-        na, nb = sizes[a], sizes[b]
-        link[a, :] = (link[a, :] * na + link[b, :] * nb) / (na + nb)
-        link[:, a] = link[a, :]
-        link[a, a] = -1
-        sizes[a] = na + nb
-        clusters[a] += clusters.pop(b)
-        alive.remove(b)
-    clusters = {k: [big[i] for i in v] for k, v in clusters.items()}
+    sim = region_similarity(p["lex"], inv, big)
+    dialect_cut, language_cut = _agglomerate(sim, counts[big], (DIALECT, SAME_LANGUAGE))
+    dialect_of = {}
+    for d, members in enumerate(dialect_cut):
+        for k in members:
+            dialect_of[k] = d
     out = []
-    for members in clusters.values():
-        rows = np.flatnonzero(np.isin(inv, members))
-        # A whole language has dialects, so its word for something is simply the most
+    for members in language_cut:
+        regions = big[members]
+        rows = np.flatnonzero(np.isin(inv, regions))
+        if rows.size < MIN_SPEAKERS:
+            continue
+        # A whole language has dialects, so its word for something is the most
         # common one among its speakers (if at least a fifth of them use it).
         _, _, _, w, sh = dictionaries(p["lex"][rows], np.zeros(rows.size, dtype=np.int64), min_share=0.2)
-        vocab = int((w[0] > 0).sum())
-        if rows.size >= MIN_SPEAKERS and vocab >= MIN_VOCAB:
-            out.append({"words": w[0], "share": sh[0], "speakers": int(rows.size), "rows": rows,
-                        "regions": [int(groups[g]) for g in members]})
+        if int((w[0] > 0).sum()) < MIN_VOCAB:
+            continue
+        dialects = []
+        for d in sorted({dialect_of[k] for k in members}):
+            d_regions = big[[k for k in members if dialect_of[k] == d]]
+            d_rows = np.flatnonzero(np.isin(inv, d_regions))
+            _, _, _, dw, _ = dictionaries(p["lex"][d_rows], np.zeros(d_rows.size, dtype=np.int64), min_share=0.3)
+            cy = np.mean([region_centre(int(groups[r]))[0] for r in d_regions])
+            cx = np.mean([region_centre(int(groups[r]))[1] for r in d_regions])
+            feats = {}
+            if static is not None and "coast_c" in static:
+                pos = p["pos"][d_rows]
+                feats = {"coast": float(static["coast_c"][pos].mean()), "mountain": float(static["mount_c"][pos].mean()),
+                         "lake": float(static["lake_c"][pos].mean()), "river": float(static["water_c"][pos].mean())}
+            dialects.append({"regions": [int(groups[r]) for r in d_regions], "speakers": int(d_rows.size),
+                             "words": dw[0], "centre": (float(cy), float(cx)), "features": feats})
+        # What a visitor would hear most: the biggest dialect's words, where the
+        # language as a whole hasn't settled on one.
+        main = max(dialects, key=lambda d: d["speakers"]) if dialects else None
+        display = np.where(w[0] > 0, w[0], main["words"] if main is not None else 0)
+        out.append({"words": w[0], "display": display, "share": sh[0], "speakers": int(rows.size), "rows": rows,
+                    "regions": [int(groups[g]) for g in regions], "dialects": dialects,
+                    "region_speakers": {int(groups[g]): int(counts[g]) for g in regions}})
     out.sort(key=lambda d: -d["speakers"])
     return out
 
@@ -379,11 +543,29 @@ def classify(p: dict, languages: list[dict]) -> np.ndarray:
     n = p["id"].size
     if not languages or n == 0:
         return np.full(n, -1)
-    D = np.array([l["words"] for l in languages], dtype=np.int64)            # (L, M)
+    D = np.array([list(l["words"]) + [0] * (M - len(l["words"])) for l in languages], dtype=np.int64)  # (L, M)
     out = np.full(n, -1)
-    for start in range(0, n, 4000):                                           # in chunks, to keep memory small
+    for start in range(0, n, 4000):
         lex = p["lex"][start:start + 4000].astype(np.int64)
-        sim = similarity(lex, D) if lex.size else np.zeros((0, len(languages)))
+        sim = similarity(lex, D)
         best = np.argmax(sim, axis=1)
         out[start:start + 4000] = np.where(sim[np.arange(lex.shape[0]), best] >= PERSON_MATCH, best, -1)
     return out
+
+
+def sound_name(words: np.ndarray, taken: set, rng_seed: int) -> str:
+    """A name built from a language's own most typical sounds (used only when it
+    has no settled word for "us")."""
+    d = digits(np.asarray(words, dtype=np.int64)[np.asarray(words) > 0]).ravel()
+    d = d[d > 0]
+    if d.size == 0:
+        return "Unnamed"
+    syl, cnt = np.unique(d, return_counts=True)
+    common = syl[np.argsort(-cnt, kind="stable")][:6]
+    rng = np.random.default_rng(rng_seed)
+    for _ in range(50):
+        k = int(rng.integers(2, 4))
+        name = "".join(syllable(int(x)) for x in rng.choice(common, k)).capitalize()
+        if name not in taken:
+            return name
+    return f"{name} {len(taken) + 1}"

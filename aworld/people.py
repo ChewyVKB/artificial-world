@@ -51,8 +51,9 @@ ARRAYS = {   # name -> dtype; one entry per living person
     "known": np.uint32,     # techniques this person knows (one bit each, see knowledge.py)
     "items": np.uint32,     # things this person is carrying (one bit each)
     "name": np.int64,       # a word their mother named them with (0 = no name)
+    "accent": np.uint32,    # the sound rules they speak with (see language.ACCENT_RULES)
 }
-DEFAULTS = {"known": 0, "items": 0, "name": 0}    # value for fields missing from older saves (else -1)
+DEFAULTS = {"known": 0, "items": 0, "name": 0, "accent": 0}    # value for fields missing from older saves (else -1)
 # Per-person tables: name -> (columns, dtype)
 MATRICES = {
     "skill": (knowledge.R, np.float32),     # how good they are at each technique
@@ -92,7 +93,10 @@ def load_arrays(z) -> dict | None:
         genes = np.concatenate([genes, pad], axis=1)
     p["genes"] = genes
     for k, (cols, t) in MATRICES.items():
-        p[k] = z[f"people.{k}"].astype(t) if f"people.{k}" in z else np.zeros((n, cols), dtype=t)
+        m = z[f"people.{k}"].astype(t) if f"people.{k}" in z else np.zeros((n, cols), dtype=t)
+        if m.shape[1] < cols:                           # more meanings/techniques exist now: pad
+            m = np.concatenate([m, np.zeros((n, cols - m.shape[1]), dtype=t)], axis=1)
+        p[k] = m
     p["next_id"] = int(z["people.next_id"])
     return p
 
@@ -139,7 +143,7 @@ def founders(cfg: dict, static: dict, rng: np.random.Generator, tick: int) -> tu
         "pregnant_until": np.full(n, -1, dtype=np.int64), "pregnant_by": np.full(n, -1, dtype=np.int64),
         "last_birth": np.full(n, -10 ** 9, dtype=np.int64), "target": np.full(n, -1, dtype=np.int64),
         "known": np.zeros(n, dtype=np.uint32), "items": np.zeros(n, dtype=np.uint32),
-        "name": np.zeros(n, dtype=np.int64),
+        "name": np.zeros(n, dtype=np.int64), "accent": np.zeros(n, dtype=np.uint32),
         "genes": np.clip(genes, GENE_RANGE[:, 0], GENE_RANGE[:, 1]),
         "next_id": n + 1,
     })
@@ -482,6 +486,7 @@ def _births(p: dict, mothers: np.ndarray, tick: int, cfg: dict, rng: np.random.G
         "last_birth": np.full(k, -10 ** 9, dtype=np.int64), "target": np.full(k, -1, dtype=np.int64),
         "known": np.zeros(k, dtype=np.uint32), "items": np.zeros(k, dtype=np.uint32),
         "name": language.name_children(p, mothers, rng) if naming else np.zeros(k, dtype=np.int64),
+        "accent": p["accent"][mothers].copy(),               # children start with their mother's accent
     }
     p["energy"][mothers] = np.maximum(p["energy"][mothers] - 0.15, 0)
     p["last_birth"][mothers] = tick

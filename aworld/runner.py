@@ -325,8 +325,9 @@ class Runner:
             out = []
             for l in reg:
                 words = [{"meaning": lg.MEANINGS[m][1], "word": lg.word_str(c)}
-                         for m, c in enumerate(l["words"]) if c]
+                         for m, c in enumerate(l.get("display") or l["words"]) if c]
                 out.append({"id": l["id"], "name": l["name"], "born_year": l["born_year"], "status": l.get("status", "alive"),
+                            "dialects": l.get("dialects", []),
                             "died_year": l["died_year"], "parent": names.get(l["parent"]),
                             "speakers": l["speakers"] if l["died_year"] is None else 0,
                             "census_year": l.get("census_year"), "closest_match_now": now.get(l["id"], 0),
@@ -442,6 +443,13 @@ class Runner:
                     langs = self.observer.living_languages()
                     k = int(lg.classify({"id": p["id"][i:i + 1], "lex": p["lex"][i:i + 1]}, langs)[0]) if langs else -1
                     info["speaks"] = langs[k]["name"] if k >= 0 else None
+                    if k >= 0:
+                        region = int(lg.region_labels(w)[i])
+                        for d in langs[k].get("dialects", []):
+                            if region in d.get("regions", []):
+                                info["speaks"] = d["name"]
+                    if "accent" in p and p["accent"][i]:
+                        info["accent"] = lg.accent_str(int(p["accent"][i]))
                     info["vocabulary"] = [{"meaning": lg.MEANINGS[m][1], "word": lg.word_str(int(c)),
                                            "sure": round(float(p["lexs"][i, m]), 2)}
                                           for m, c in enumerate(p["lex"][i]) if c]

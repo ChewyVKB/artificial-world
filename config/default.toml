@@ -66,11 +66,14 @@ learn_rate = 0.01            # daily chance someone picks up a technique from a 
 [language]
 # Inventing and sharing words. Worlds created without this section have no
 # language. No words are built in: every word is coined by someone in the world.
-talk_rate = 0.25             # daily chance someone talks with a person nearby (scaled by the speech trait)
+talk_rate = 0.5              # chance, each round, that someone talks with a person nearby (scaled by the speech trait)
+rounds_per_day = 3           # rounds of conversation per day
 invent_rate = 0.01           # chance a speaker coins a word for something they have no word for
-sound_change = 0.03          # chance a sound slips when a word is copied (dialects form from these)
-innovate_rate = 0.0001       # chance a speaker coins a new way of saying something they already have a word for
+sound_change = 0.01          # chance a sound slips when a word is copied (dialects form from these)
+innovate_rate = 0.00003      # chance a speaker coins a new way of saying something they already have a word for
 switch_rate = 0.25           # chance a listener takes up a speaker's word when theirs differs (children: double)
+accent_rate = 0.05           # chance a listener picks up the speaker's accent (children: five times as likely)
+accent_innovate = 0.000005     # chance a speaker starts pronouncing a sound a new way (a new sound rule)
 
 [storage]
 checkpoint_every_days = 360  # save a full snapshot this often (360 = once per year)

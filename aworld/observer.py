@@ -223,40 +223,54 @@ class Observer:
         return ev
 
     def _yearly_language(self, world: World) -> list[dict]:
-        """Yearly census of languages: match this year's to those already known,
-        and notice new languages, splits and deaths.
+        """Yearly census of languages.
 
-        To avoid crying wolf over a few families on the fringe, a new language
-        must show up in CONFIRM_YEARS censuses in a row before it's announced,
-        and a language must go unheard for GONE_YEARS before it's declared dead."""
+        Continuity comes first: a language found where a known language was spoken
+        last year (and still recognisably the same) *is* that language, whatever
+        has changed. Only a group that can no longer understand the people it
+        descends from counts as a new language — and only after it has stayed
+        that way for CONFIRM_YEARS censuses. A language is declared dead after
+        GONE_YEARS censuses with no speakers."""
         mem, ev = self.memory, []
         reg = mem.setdefault("languages", [])
         p = world.state["people"]
-        found = [f for f in lg.detect(p, lg.region_labels(world))]
+        found = lg.detect(p, lg.region_labels(world), world.static)
         known = [l for l in reg if l.get("status", "alive") in ("alive", "candidate")]
         t, yr = world.tick, world.year
 
         def add(kind, title, **data):
             ev.append({"tick": t, "type": kind, "title": title, "data": data, "major": True})
 
+        # How well each newly found language lines up with each known one:
+        # shared territory (by speakers) and shared words.
         claimed: dict[int, list] = {}
         unclaimed = []
         if known and found:
-            sim = lg.similarity(np.array([f["words"] for f in found]), np.array([l["words"] for l in known]))
-            for i in range(len(found)):
-                j = int(np.argmax(sim[i]))
-                (claimed.setdefault(j, []) if sim[i, j] >= 0.4 else unclaimed).append(i if sim[i, j] >= 0.4 else (i, None))
+            words_sim = lg.similarity(np.array([f["words"] for f in found]),
+                                      np.array([self._pad(l["words"]) for l in known]))
+            for i, f in enumerate(found):
+                overlap = np.array([sum(f["region_speakers"].get(r, 0) for r in l.get("regions", []))
+                                    / max(f["speakers"], 1) for l in known])
+                score = np.where((overlap >= 0.25) & (words_sim[i] >= lg.RELATED), overlap + words_sim[i], -1.0)
+                score = np.where((overlap < 0.25) & (words_sim[i] >= lg.SAME_LANGUAGE), words_sim[i], score)
+                j = int(np.argmax(score))
+                if score[j] > 0:
+                    claimed.setdefault(j, []).append((float(score[j]) * f["speakers"], i))
+                else:
+                    rel = int(np.argmax(words_sim[i]))
+                    unclaimed.append((i, known[rel]["id"] if words_sim[i, rel] >= lg.RELATED else None))
         else:
             unclaimed = [(i, None) for i in range(len(found))]
-        for j, idxs in claimed.items():
-            # The biggest matching group carries the language on; others that matched it
-            # but no longer understand that group may be splitting off.
-            idxs.sort(key=lambda i: -found[i]["speakers"])
-            keep = idxs[0]
-            l = known[j]
-            l.update(words=[int(x) for x in found[keep]["words"]], speakers=found[keep]["speakers"],
-                     regions=found[keep]["regions"], census_year=yr, seen=l.get("seen", 0) + 1, missed=0)
-            for i in idxs[1:]:
+        for j, items in claimed.items():
+            items.sort(reverse=True)
+            keep = items[0][1]
+            l, f = known[j], found[keep]
+            l.update(words=[int(x) for x in f["words"]], display=[int(x) for x in f["display"]],
+                     speakers=f["speakers"], regions=f["regions"],
+                     census_year=yr, seen=l.get("seen", 0) + 1, missed=0,
+                     dialects=self._dialects(l, f))
+            # Others that came from here but can't understand the main group any more.
+            for _, i in items[1:]:
                 unclaimed.append((i, l["id"] if l.get("status", "alive") == "alive" else l.get("parent")))
         for i, parent in unclaimed:
             f = found[i]
@@ -264,9 +278,12 @@ class Observer:
                 continue
             lid = mem.get("next_language_id", 1)
             mem["next_language_id"] = lid + 1
-            reg.append({"id": lid, "name": None, "status": "candidate", "born_year": yr, "parent": parent,
-                        "died_year": None, "words": [int(x) for x in f["words"]], "speakers": f["speakers"],
-                        "regions": f["regions"], "census_year": yr, "seen": 1, "missed": 0})
+            entry = {"id": lid, "name": None, "status": "candidate", "born_year": yr, "parent": parent,
+                     "died_year": None, "words": [int(x) for x in f["words"]], "speakers": f["speakers"],
+                     "display": [int(x) for x in f["display"]],
+                     "regions": f["regions"], "census_year": yr, "seen": 1, "missed": 0}
+            entry["dialects"] = self._dialects(entry, f)
+            reg.append(entry)
         claimed_ids = {known[j]["id"] for j in claimed}
         for l in known:
             if l["id"] not in claimed_ids:
@@ -274,50 +291,101 @@ class Observer:
                 l["seen"] = 0
         # Promote, retire, forget.
         names = {l["name"] for l in reg if l.get("name")}
-        alive_before = any(l.get("status", "alive") == "alive" or l.get("died_year") for l in reg if l.get("name"))
+        any_before = any(l.get("name") for l in reg)
         for l in list(reg):
             status = l.get("status", "alive")
             if status == "candidate" and l["seen"] >= CONFIRM_YEARS:
                 l["status"] = "alive"
-                l["name"] = self._language_name(l["words"], names)
+                l["name"] = self._language_name(l["words"], names, l["id"])
                 names.add(l["name"])
+                l["dialects"] = self._dialects(l, None)
                 parent = next((x for x in reg if x["id"] == l["parent"] and x.get("name")), None)
                 if parent is not None:
-                    add("LANGUAGE_SPLIT", f"Year {yr}: {l['name']} has drifted apart from {parent['name']} — "
-                                          f"{l['speakers']} people now speak a language of their own",
+                    shared = float(lg.similarity(np.array([self._pad(l["words"])]),
+                                                 np.array([self._pad(parent["words"])]))[0, 0])
+                    note = f" (only {shared:.0%} of basic words still shared)" if shared < 0.5 else ""
+                    add("LANGUAGE_SPLIT", f"Year {yr}: {l['name']} is now a language of its own — its "
+                                          f"{l['speakers']} speakers can no longer understand {parent['name']}{note}",
                         language=l["name"], parent=parent["name"])
-                elif not alive_before:
+                elif not any_before:
                     add("FIRST_LANGUAGE", f"Year {yr}: the first language takes shape — {l['speakers']} people "
                                           f"share {sum(1 for w in l['words'] if w)} words. They call themselves “{l['name']}”",
                         language=l["name"])
-                    alive_before = True
                 else:
                     add("LANGUAGE_EMERGED", f"Year {yr}: a new language, {l['name']}, takes shape among "
                                             f"{l['speakers']} people", language=l["name"])
+                any_before = True
             elif status == "candidate" and l["missed"] >= 2:
                 reg.remove(l)
             elif status == "alive" and l.get("missed", 0) >= GONE_YEARS:
-                l.update(status="dead", died_year=yr, regions=[], speakers=0)
+                l.update(status="dead", died_year=yr, regions=[], speakers=0, dialects=[])
                 add("LANGUAGE_DIED", f"Year {yr}: {l['name']} is no longer spoken", language=l["name"])
         return ev
 
     @staticmethod
-    def _language_name(words, taken: set) -> str:
-        """A language is named by its own word for "us" — or, if that's missing or
-        already the name of another language, by the next of its own words that is
-        free (its word for water, plants, the river...). Related languages keep
-        sharing some words, so this keeps their names distinct."""
-        order = [lg.MI[k] for k in ("people", "water", "plant", "river", "herd", "eat", "child", "mother")]
-        order += [m for m in range(lg.M) if m not in order]
-        options = [lg.name_str(int(words[m])) for m in order if int(words[m])]
-        for name in options:
+    def _pad(words) -> list:
+        """Word lists saved before new meanings existed are shorter: pad them."""
+        return list(words) + [0] * (lg.M - len(words))
+
+    @staticmethod
+    def _dialects(lang: dict, found: dict | None) -> list[dict]:
+        """Name each dialect by where it's spoken relative to the language's centre
+        (Northern, South-western...), and note the words that set it apart."""
+        if found is not None:
+            lang["_dialects_raw"] = [{"regions": d["regions"], "speakers": d["speakers"], "centre": d["centre"],
+                                      "features": d.get("features", {}),
+                                      "words": [int(x) for x in d["words"]]} for d in found["dialects"]]
+        raw = lang.get("_dialects_raw", [])
+        total = sum(d["speakers"] for d in raw)
+        # Only name dialects with a real following; scattered local varieties are counted, not named.
+        raw = [d for d in raw if d["speakers"] >= max(30, 0.08 * total)]
+        if len(raw) < 2:
+            return []
+        total = sum(d["speakers"] for d in raw)
+        cy = sum(d["centre"][0] * d["speakers"] for d in raw) / total
+        cx = sum(d["centre"][1] * d["speakers"] for d in raw) / total
+        base = lang.get("name") or ""
+        compass = ["Eastern", "South-eastern", "Southern", "South-western", "Western", "North-western",
+                   "Northern", "North-eastern"]
+        landscape = {"coast": "Coastal", "mountain": "Highland", "lake": "Lakeside", "river": "River"}
+
+        def labels(d):
+            """Ways to describe where a dialect is spoken, best first."""
+            dy, dx = d["centre"][0] - cy, d["centre"][1] - cx
+            where = "Central" if (dy * dy + dx * dx) ** 0.5 < 12 else \
+                compass[int(round(np.degrees(np.arctan2(dy, dx)) / 45.0)) % 8]      # y grows southward
+            feats = sorted(((v, k) for k, v in d.get("features", {}).items() if v >= 0.5), reverse=True)
+            land = [landscape[k] for _, k in feats]
+            options = [where] + land + [f"{l} {where.lower()}" for l in land]
+            return options
+
+        out, used = [], set()
+        for d in sorted(raw, key=lambda d: -d["speakers"]):
+            options = labels(d)
+            label = next((o for o in options if o not in used), None)
+            if label is None:
+                k = 2
+                while f"{options[0]} {k}" in used:
+                    k += 1
+                label = f"{options[0]} {k}"
+            used.add(label)
+            diffs = [{"meaning": lg.MEANINGS[m][1], "word": lg.word_str(w), "standard": lg.word_str(lang["words"][m])}
+                     for m, w in enumerate(d["words"]) if w and m < len(lang["words"]) and lang["words"][m]
+                     and w != lang["words"][m]]
+            out.append({"name": f"{label} {base}".strip(), "speakers": d["speakers"], "regions": d["regions"],
+                        "differences": diffs[:6]})
+        return out
+
+    @staticmethod
+    def _language_name(words, taken: set, seed: int) -> str:
+        """A language is named after its own word for "us". If its speakers haven't
+        settled on one, the name is made from the language's most typical sounds."""
+        us = int(words[lg.MI["people"]]) if len(words) > lg.MI["people"] else 0
+        if us:
+            name = lg.name_str(us)
             if name not in taken and len(name) >= 2:
                 return name
-        base = options[0] if options else "Unnamed"
-        k = 2
-        while f"{base} {k}" in taken:
-            k += 1
-        return f"{base} {k}"
+        return lg.sound_name(np.array(words), taken, seed)
 
     # ── people ─────────────────────────────────────────────────
     def _count_people(self, world: World, today: dict) -> list[dict]:
