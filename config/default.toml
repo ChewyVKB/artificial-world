@@ -1,0 +1,46 @@
+# ─────────────────────────────────────────────────────────────
+#  Artificial World — world settings
+#
+#  These are the "laws of physics" for a world. A world is fully
+#  defined by:  seed + simulation version + these settings.
+#  Change a setting → you get a different universe.
+#
+#  Settings are locked into a world when it is created, so editing
+#  this file never changes a world that already exists. It only
+#  affects NEW worlds.
+# ─────────────────────────────────────────────────────────────
+
+[world]
+seed = 12345
+width = 256              # cells east–west   (each cell ≈ 4 km)
+height = 256             # cells north–south
+sea_level = 0.55         # fraction of terrain height that is under water (higher = more ocean)
+continent_scale = 3.0    # bigger number = more, smaller landmasses
+mountain_height_m = 4500 # elevation of the tallest peaks, in metres
+days_per_year = 360
+
+[climate]
+equator_temp_c = 28.0        # yearly average temperature at the equator, sea level
+pole_temp_c = -22.0          # yearly average temperature at the poles
+lapse_rate_c_per_km = 6.5    # how much colder it gets per km of altitude
+seasonal_swing_c = 14.0      # summer/winter difference far from the equator
+base_rain_mm = 1100.0         # typical yearly rainfall
+climate_variability = 0.15   # how much wet/dry years swing (0 = every year identical)
+climate_memory = 0.6         # 0 = each year independent, near 1 = long droughts/wet spells
+
+[ecology]
+plant_growth_rate = 0.03     # how fast vegetation regrows per day in good conditions
+plant_dieback_rate = 0.01    # how fast vegetation dies in frost or drought
+grazer_growth = 0.015        # how efficiently grazing animals turn plants into offspring
+grazer_death = 0.004         # daily death rate of grazers
+grazer_appetite = 0.012      # how much vegetation grazers eat per day
+grazer_spread = 0.10         # how fast grazers wander into neighbouring land
+predator_growth = 0.015      # how efficiently predators turn prey into offspring
+predator_death = 0.003       # daily death rate of predators
+predator_appetite = 0.03     # how much prey predators catch per day
+predator_spread = 0.06       # how fast predators wander
+
+[storage]
+checkpoint_every_days = 360  # save a full snapshot this often (360 = once per year)
+max_storage_gb = 100         # hard cap; old snapshots are thinned to stay under it
+metrics_every_days = 10      # record world statistics this often

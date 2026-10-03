@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Artificial World</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><circle cx=%228%22 cy=%228%22 r=%227%22 fill=%22%237bc96f%22/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <span class="glyph" aria-hidden="true">◐</span>
+    <div>
+      <div class="world-name" id="worldName">—</div>
+      <div class="world-seed" id="worldSeed"></div>
+    </div>
+  </div>
+
+  <div class="clock">
+    <div class="year" id="clockYear">Year 0</div>
+    <div class="day" id="clockDay">Day 0</div>
+  </div>
+
+  <div class="controls">
+    <button id="btnPlay" class="primary" title="Start / pause (space)">▶ Start</button>
+    <button id="btnDay" title="Advance one day">+1 day</button>
+    <button id="btnYear" title="Advance one year">+1 year</button>
+    <label class="field">Speed
+      <select id="speed"></select>
+    </label>
+  </div>
+
+  <div class="controls">
+    <div class="seg" role="group" aria-label="View">
+      <button id="view3d" class="on">3D</button>
+      <button id="view2d">Map</button>
+    </div>
+    <label class="field">Show
+      <select id="layer">
+        <option value="natural">Natural</option>
+        <option value="plants">Vegetation</option>
+        <option value="grazers">Grazing herds</option>
+        <option value="predators">Predators</option>
+        <option value="temp">Temperature</option>
+        <option value="rain">Rain vs. normal</option>
+        <option value="biome">Biomes</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="controls right">
+    <button id="btnSave" title="Save a checkpoint now">Save</button>
+    <button id="btnWorlds" title="Open or create worlds">Worlds</button>
+  </div>
+</header>
+
+<main>
+  <section class="viewport" id="viewport">
+    <canvas id="view3"></canvas>
+    <canvas id="view2" hidden></canvas>
+    <div class="legend" id="legend"></div>
+    <div class="toast" id="toast" hidden></div>
+    <div class="hint">Drag to orbit · right-drag to pan · scroll to zoom · click land to inspect</div>
+  </section>
+
+  <aside class="panel">
+    <section class="card stats">
+      <div class="stat"><span class="k">Grazing animals</span><span class="v" id="sGrazers">—</span></div>
+      <div class="stat"><span class="k">Predators</span><span class="v" id="sPredators">—</span></div>
+      <div class="stat"><span class="k">Vegetation</span><span class="v" id="sVeg">—</span></div>
+      <div class="stat"><span class="k">Sim speed</span><span class="v" id="sSpeed">—</span></div>
+    </section>
+
+    <section class="card">
+      <h3>Populations <small>animals</small></h3>
+      <canvas class="chart" id="chartPop" height="130"></canvas>
+    </section>
+    <section class="card">
+      <h3>Climate <small>vegetation % · drought area %</small></h3>
+      <canvas class="chart" id="chartClimate" height="110"></canvas>
+    </section>
+
+    <section class="card" id="inspector">
+      <h3>Inspector</h3>
+      <div class="muted" id="inspectBody">Click anywhere on the land.</div>
+    </section>
+
+    <section class="card">
+      <h3>History</h3>
+      <ol class="history" id="history"></ol>
+    </section>
+
+    <section class="card">
+      <h3>Rewind</h3>
+      <div class="rewind">
+        <label class="field">Go to year <input id="seekYear" type="number" min="0" value="0"></label>
+        <button id="btnSeek">Go</button>
+      </div>
+      <label class="check"><input type="checkbox" id="pauseMajor"> Pause on major events</label>
+      <div class="muted small" id="storage"></div>
+    </section>
+  </aside>
+</main>
+
+<dialog id="worldsDialog">
+  <form method="dialog" class="dlg">
+    <h3>Worlds</h3>
+    <ul id="worldList" class="world-list"></ul>
+    <h4>Create a new world</h4>
+    <div class="row">
+      <label class="field">Name <input id="newName" value="New World"></label>
+      <label class="field">Seed <input id="newSeed" type="number" placeholder="random"></label>
+    </div>
+    <p class="muted small">A seed is the world's DNA: the same seed always grows the same world.</p>
+    <div class="row end">
+      <button value="cancel">Close</button>
+      <button id="btnCreate" class="primary" value="default">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
