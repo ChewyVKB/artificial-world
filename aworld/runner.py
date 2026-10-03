@@ -16,6 +16,7 @@ import numpy as np
 
 from .config import load_config
 from . import knowledge as kn
+from . import language as lg
 from . import people as ppl
 from .ecology import BIOMES
 from .observer import GRAZERS_PER_UNIT, PREDATORS_PER_UNIT, Observer
@@ -70,7 +71,7 @@ class Runner:
             p = world.state["people"]
             store.record_people(0, [], [], founders=[
                 (int(p["id"][i]), int(p["mother"][i]), int(p["father"][i]), int(p["sex"][i]), int(p["birth"][i]),
-                 int(p["pos"][i]), 0, json.dumps(p["genes"][i].round(4).tolist())) for i in range(p["id"].size)])
+                 int(p["pos"][i]), 0, json.dumps(p["genes"][i].round(4).tolist()), None) for i in range(p["id"].size)])
         store.write_checkpoint(world, observer.memory)
         store.commit()
         self._swap(world, store, observer)
@@ -263,6 +264,7 @@ class Runner:
                 q(st["anomaly"], -0.5, 0.5),
                 self._people_layer(),
                 self._knowledge_layer(),
+                self._language_layer(),
             ]
             return b"".join(np.round(l).astype(np.uint8).tobytes() for l in layers)
 
@@ -289,6 +291,48 @@ class Runner:
             cnt = np.bincount(p["pos"], minlength=ncell)
             out[w.static["cells"]] = np.where(cnt > 0, np.minimum(tot / np.maximum(cnt, 1) * 25, 255), 0)
         return out.reshape(w.shape)
+
+    def _language_layer(self) -> np.ndarray:
+        """Which language is spoken where, from the latest language census (language id, 0 = none)."""
+        w = self.world
+        out = np.zeros(w.shape[0] * w.shape[1])
+        p = w.state.get("people")
+        langs = self.observer.living_languages()
+        if p is not None and p["id"].size and langs and lg.enabled(w.cfg):
+            region_ids = np.array([r for l in langs for r in l.get("regions", [])], dtype=np.int64)
+            lang_ids = np.array([l["id"] for l in langs for _ in l.get("regions", [])], dtype=np.int64)
+            if region_ids.size:
+                order = np.argsort(region_ids)
+                region_ids, lang_ids = region_ids[order], lang_ids[order]
+                mine = lg.region_labels(w)
+                j = np.clip(np.searchsorted(region_ids, mine), 0, region_ids.size - 1)
+                hit = region_ids[j] == mine
+                out[w.static["cells"][p["pos"][hit]]] = (lang_ids[j[hit]] - 1) % 250 + 1
+        return out.reshape(w.shape)
+
+    def languages(self) -> dict:
+        """Every language this world has known: its words, speakers, history."""
+        with self.lock:
+            w = self.world
+            if not (w.has_people and lg.enabled(w.cfg)):
+                return {"enabled": False, "languages": []}
+            reg = [l for l in self.observer.memory.get("languages", []) if l.get("name")]
+            p = w.state["people"]
+            living = self.observer.living_languages()
+            which = lg.classify(p, living)
+            now = {l["id"]: int((which == k).sum()) for k, l in enumerate(living)}
+            names = {l["id"]: l["name"] for l in reg}
+            out = []
+            for l in reg:
+                words = [{"meaning": lg.MEANINGS[m][1], "word": lg.word_str(c)}
+                         for m, c in enumerate(l["words"]) if c]
+                out.append({"id": l["id"], "name": l["name"], "born_year": l["born_year"], "status": l.get("status", "alive"),
+                            "died_year": l["died_year"], "parent": names.get(l["parent"]),
+                            "speakers": l["speakers"] if l["died_year"] is None else 0,
+                            "census_year": l.get("census_year"), "closest_match_now": now.get(l["id"], 0),
+                            "words": words})
+            return {"enabled": True, "languages": out,
+                    "words_per_person": float((p["lex"] > 0).sum(axis=1).mean()) if p["id"].size else 0}
 
     def knowledge(self) -> dict:
         """The world's techniques: who knows them, when they were found or lost."""
@@ -351,7 +395,8 @@ class Runner:
 
     def _person_brief(self, i: int) -> dict:
         p, w = self.world.state["people"], self.world
-        return {"id": int(p["id"][i]), "sex": "female" if p["sex"][i] == ppl.FEMALE else "male",
+        return {"id": int(p["id"][i]), "name": lg.name_str(int(p["name"][i])) if "name" in p else None,
+                "sex": "female" if p["sex"][i] == ppl.FEMALE else "male",
                 "age": round((w.tick - int(p["birth"][i])) / w.dpy, 1), "health": round(float(p["health"][i]), 2)}
 
     def person(self, pid: int) -> dict:
@@ -367,8 +412,12 @@ class Runner:
             def status_of(other):
                 if other is None or other < 0:
                     return None
-                alive = ppl.index_of(p["id"], np.array([other]))[0] >= 0
-                return {"id": int(other), "alive": bool(alive)}
+                r = ppl.index_of(p["id"], np.array([other]))[0]
+                if r >= 0:
+                    name = lg.name_str(int(p["name"][r])) if "name" in p else None
+                else:
+                    name = self.store.names_of([int(other)]).get(int(other))
+                return {"id": int(other), "alive": bool(r >= 0), "name": name}
 
             def xy(compact):
                 full = int(w.static["cells"][compact])
@@ -389,6 +438,13 @@ class Runner:
                     "born_year": int(p["birth"][i]) // w.dpy,
                     "traits": {g: round(float(p["genes"][i, k]), 3) for k, g in enumerate(ppl.GENES)},
                 }
+                if lg.enabled(w.cfg):
+                    langs = self.observer.living_languages()
+                    k = int(lg.classify({"id": p["id"][i:i + 1], "lex": p["lex"][i:i + 1]}, langs)[0]) if langs else -1
+                    info["speaks"] = langs[k]["name"] if k >= 0 else None
+                    info["vocabulary"] = [{"meaning": lg.MEANINGS[m][1], "word": lg.word_str(int(c)),
+                                           "sure": round(float(p["lexs"][i, m]), 2)}
+                                          for m, c in enumerate(p["lex"][i]) if c]
                 if kn.enabled(w.cfg):
                     info["knows"] = [{"name": rec["name"], "skill": round(float(p["skill"][i, r]), 2)}
                                      for r, rec in enumerate(kn.RECIPES) if int(p["known"][i]) >> r & 1]
@@ -396,7 +452,8 @@ class Runner:
                                         if rec["lasts"] and int(p["items"][i]) >> r & 1]
                 info["age"] = round(age, 1)
             elif rec and rec["birth_tick"] <= w.tick:
-                info = {"id": pid, "alive": False, "sex": "female" if rec["sex"] == ppl.FEMALE else "male",
+                info = {"id": pid, "alive": False, "name": rec.get("name"),
+                        "sex": "female" if rec["sex"] == ppl.FEMALE else "male",
                         "generation": rec["generation"], "born_year": rec["birth_tick"] // w.dpy,
                         "died_year": rec["death_tick"] // w.dpy if rec["death_tick"] is not None else None,
                         "cause_of_death": rec["death_cause"], "age_at_death": rec["death_age"],
@@ -406,7 +463,7 @@ class Runner:
             else:
                 return {"error": f"no person #{pid} (yet)"}
             info["children"] = [{"id": c["id"], "sex": "female" if c["sex"] == ppl.FEMALE else "male",
-                                 "alive": bool(ppl.index_of(p["id"], np.array([c["id"]]))[0] >= 0)}
+                                 "alive": bool(ppl.index_of(p["id"], np.array([c["id"]]))[0] >= 0), "name": c["name"]}
                                 for c in self.store.children_of(pid, w.tick)]
             return info
 

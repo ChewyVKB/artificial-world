@@ -61,7 +61,7 @@ class TestPeople(unittest.TestCase):
     def test_children_inherit_traits_within_range(self):
         g = self.w.state["people"]["genes"]
         self.assertTrue((g >= people.GENE_RANGE[:, 0]).all() and (g <= people.GENE_RANGE[:, 1]).all())
-        for _, mother, father, _, _, _, genes in self.births[:50]:
+        for _, mother, father, _, _, _, genes, *_ in self.births[:50]:
             self.assertEqual(len(genes), len(people.GENES))
 
     def test_groups_are_found(self):

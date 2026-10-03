@@ -175,6 +175,9 @@ class WorldStore:
                 CREATE INDEX IF NOT EXISTS people_mother ON people(mother);
                 CREATE INDEX IF NOT EXISTS people_father ON people(father);
             """)
+            cols = {r[1] for r in self._db.execute("PRAGMA table_info(people)")}
+            if "name" not in cols:                       # added in Stage 4
+                self._db.execute("ALTER TABLE people ADD COLUMN name TEXT")
         return self._db
 
     def record(self, tick: int, metrics: dict, events: list[dict]) -> None:
@@ -189,30 +192,38 @@ class WorldStore:
     def record_people(self, tick: int, births: list, deaths: list, founders: list | None = None) -> None:
         """The family record: every birth and every death, forever."""
         db = self.db
-        rows = list(founders or []) + [(i, m, f, sx, tick, cell, gen, json.dumps(g)) for i, m, f, sx, cell, gen, g in births]
+        rows = [tuple(r) + (None,) * (9 - len(r)) for r in (founders or [])]
+        rows += [(b[0], b[1], b[2], b[3], tick, b[4], b[5], json.dumps(b[6]), b[7] if len(b) > 7 else None)
+                 for b in births]
         if rows:
-            db.executemany("INSERT OR IGNORE INTO people (id,mother,father,sex,birth_tick,birth_cell,generation,genes) "
-                           "VALUES (?,?,?,?,?,?,?,?)", rows)
+            db.executemany("INSERT OR IGNORE INTO people (id,mother,father,sex,birth_tick,birth_cell,generation,genes,name) "
+                           "VALUES (?,?,?,?,?,?,?,?,?)", rows)
         if deaths:
             db.executemany("UPDATE people SET death_tick=?, death_cause=?, death_age=?, death_cell=? WHERE id=?",
                            [(tick, people.CAUSES[c], round(a, 2), cell, i) for i, c, a, cell in deaths])
 
     def person_record(self, pid: int) -> dict | None:
         row = self.db.execute("SELECT id,mother,father,sex,birth_tick,birth_cell,generation,genes,"
-                              "death_tick,death_cause,death_age,death_cell FROM people WHERE id=?", (pid,)).fetchone()
+                              "death_tick,death_cause,death_age,death_cell,name FROM people WHERE id=?", (pid,)).fetchone()
         if not row:
             return None
         keys = ("id", "mother", "father", "sex", "birth_tick", "birth_cell", "generation", "genes",
-                "death_tick", "death_cause", "death_age", "death_cell")
+                "death_tick", "death_cause", "death_age", "death_cell", "name")
         rec = dict(zip(keys, row))
         rec["genes"] = json.loads(rec["genes"]) if rec["genes"] else None
         return rec
 
     def children_of(self, pid: int, until_tick: int) -> list[dict]:
-        rows = self.db.execute("SELECT id, sex, birth_tick, death_tick FROM people WHERE (mother=? OR father=?) "
+        rows = self.db.execute("SELECT id, sex, birth_tick, death_tick, name FROM people WHERE (mother=? OR father=?) "
                                "AND birth_tick<=? ORDER BY birth_tick", (pid, pid, until_tick)).fetchall()
-        return [{"id": i, "sex": s, "birth_tick": b, "death_tick": d if d is not None and d <= until_tick else None}
-                for i, s, b, d in rows]
+        return [{"id": i, "sex": s, "birth_tick": b, "death_tick": d if d is not None and d <= until_tick else None,
+                 "name": nm} for i, s, b, d, nm in rows]
+
+    def names_of(self, ids: list[int]) -> dict:
+        if not ids:
+            return {}
+        q = ",".join("?" * len(ids))
+        return {i: n for i, n in self.db.execute(f"SELECT id, name FROM people WHERE id IN ({q})", ids) if n}
 
     def commit(self) -> None:
         if self._db is not None:

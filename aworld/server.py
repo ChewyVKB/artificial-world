@@ -4,7 +4,7 @@
     GET  /api/status            time, speed, headline numbers
     GET  /api/terrain           unchanging map layers (binary)
     GET  /api/frame             current living layers (binary): plants, grazers,
-                                predators, snow, temperature, rain, people, knowledge
+                                predators, snow, temperature, rain, people, knowledge, language
     GET  /api/metrics           statistics over time (JSON)
     GET  /api/events            the history log (JSON)
     GET  /api/cell?x=&y=        everything about one spot on the map
@@ -18,6 +18,7 @@
     POST /api/worlds/open       {"id": "..."}  switch to another saved world
     POST /api/worlds/delete     {"id": "..."}  delete a world permanently
     GET  /api/knowledge         every technique: who knows it, when it was found or lost
+    GET  /api/languages         every language: its words, speakers, where it came from
 """
 from __future__ import annotations
 
@@ -127,6 +128,9 @@ def make_handler(runner: Runner):
         def r_person(self, q):
             self._json(runner.person(int(q.get("id", 0))))
 
+        def r_languages(self, q):
+            self._json(runner.languages())
+
         def r_knowledge(self, q):
             self._json(runner.knowledge())
 
@@ -191,6 +195,7 @@ def make_handler(runner: Runner):
         ("GET", "/api/people"): Handler.r_people,
         ("GET", "/api/person"): Handler.r_person,
         ("GET", "/api/knowledge"): Handler.r_knowledge,
+        ("GET", "/api/languages"): Handler.r_languages,
         ("POST", "/api/worlds/delete"): Handler.r_delete_world,
         ("POST", "/api/control"): Handler.r_control,
         ("POST", "/api/save"): Handler.r_save,

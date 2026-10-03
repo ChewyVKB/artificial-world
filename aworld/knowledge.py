@@ -197,7 +197,11 @@ def daily(world, age_y: np.ndarray, fire: np.ndarray, rng: np.random.Generator) 
         bits = ((gap[:, None] >> np.arange(R, dtype=np.uint32)[None, :]) & 1).astype(bool)
         r = np.argmax(rng.random((L.size, R)) * bits, axis=1)            # one thing they don't know yet
         t_skill = p["skill"][teacher, r]
-        learns = bits.any(axis=1) & (rng.random(L.size) < t_skill)      # a skilled teacher is easier to copy
+        ease = t_skill                                                  # a skilled teacher is easier to copy
+        if "language" in world.cfg and "lex" in p:                      # …and one you can talk to, far easier
+            from .language import shared_fraction
+            ease = np.minimum(1.0, t_skill * (1 + 2.0 * shared_fraction(p, learner, teacher)))
+        learns = bits.any(axis=1) & (rng.random(L.size) < ease)
         lr, rr = learner[learns], r[learns]
         p["known"][lr] |= (np.uint32(1) << rr.astype(np.uint32))
         p["skill"][lr, rr] = np.maximum(p["skill"][lr, rr], 0.3 * t_skill[learns])

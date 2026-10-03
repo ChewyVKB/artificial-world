@@ -63,6 +63,15 @@ move_when_food_below = 1.5   # move camp when local food per person drops below 
 experiment_rate = 0.0003     # daily chance an adult tinkers with what's around them (scaled by curiosity)
 learn_rate = 0.01            # daily chance someone picks up a technique from a person nearby
 
+[language]
+# Inventing and sharing words. Worlds created without this section have no
+# language. No words are built in: every word is coined by someone in the world.
+talk_rate = 0.25             # daily chance someone talks with a person nearby (scaled by the speech trait)
+invent_rate = 0.01           # chance a speaker coins a word for something they have no word for
+sound_change = 0.03          # chance a sound slips when a word is copied (dialects form from these)
+innovate_rate = 0.0001       # chance a speaker coins a new way of saying something they already have a word for
+switch_rate = 0.25           # chance a listener takes up a speaker's word when theirs differs (children: double)
+
 [storage]
 checkpoint_every_days = 360  # save a full snapshot this often (360 = once per year)
 max_storage_gb = 100         # hard cap; old snapshots are thinned to stay under it

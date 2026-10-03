@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from . import knowledge
+from . import knowledge, language
 
 # ── heritable traits ──────────────────────────────────────────────────
 # Each has a real trade-off, so evolution has something to work with.
@@ -33,10 +33,11 @@ GENES = (
     "wanderlust",   # how restless — willing to move somewhere unknown
     "sociability",  # how strongly drawn toward other people
     "curiosity",    # tinkers and experiments more — but spends less time foraging
+    "speech",       # talks more and copies words more faithfully — but a bigger brain needs more food
 )
 G = {name: i for i, name in enumerate(GENES)}
-GENE_RANGE = np.array([[0.6, 1.4], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1]])
-START_GENES = np.array([1.0, 0.2, 0.5, 0.5, 0.3, 0.5, 0.5])
+GENE_RANGE = np.array([[0.6, 1.4], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1], [0, 1]])
+START_GENES = np.array([1.0, 0.2, 0.5, 0.5, 0.3, 0.5, 0.5, 0.3])
 
 FEMALE, MALE = 0, 1
 CAUSES = ("old age & illness", "starvation", "thirst", "predators")
@@ -49,15 +50,22 @@ ARRAYS = {   # name -> dtype; one entry per living person
     "target": np.int64,     # where this household is heading (a cell), or -1
     "known": np.uint32,     # techniques this person knows (one bit each, see knowledge.py)
     "items": np.uint32,     # things this person is carrying (one bit each)
+    "name": np.int64,       # a word their mother named them with (0 = no name)
 }
-DEFAULTS = {"known": 0, "items": 0}    # value for fields missing from older saves (else -1)
+DEFAULTS = {"known": 0, "items": 0, "name": 0}    # value for fields missing from older saves (else -1)
+# Per-person tables: name -> (columns, dtype)
+MATRICES = {
+    "skill": (knowledge.R, np.float32),     # how good they are at each technique
+    "lex": (language.M, np.int32),          # their word for each meaning (0 = none)
+    "lexs": (language.M, np.float32),       # how sure they are of that word
+}
 
 
 def empty() -> dict:
-    from .knowledge import R
     p = {k: np.zeros(0, dtype=t) for k, t in ARRAYS.items()}
     p["genes"] = np.zeros((0, len(GENES)))
-    p["skill"] = np.zeros((0, R), dtype=np.float32)
+    for k, (cols, t) in MATRICES.items():
+        p[k] = np.zeros((0, cols), dtype=t)
     p["next_id"] = 1
     return p
 
@@ -66,7 +74,8 @@ def save_arrays(p: dict) -> dict:
     """Flatten people into named arrays for a checkpoint file."""
     out = {f"people.{k}": p[k] for k in ARRAYS}
     out["people.genes"] = p["genes"]
-    out["people.skill"] = p["skill"]
+    for k in MATRICES:
+        out[f"people.{k}"] = p[k]
     out["people.next_id"] = np.int64(p["next_id"])
     return out
 
@@ -75,7 +84,6 @@ def load_arrays(z) -> dict | None:
     if "people.id" not in z:
         return None
     n = z["people.id"].size
-    from .knowledge import R
     p = {k: (z[f"people.{k}"].astype(t) if f"people.{k}" in z else np.full(n, DEFAULTS.get(k, -1), dtype=t))
          for k, t in ARRAYS.items()}                    # fields added later get a default
     genes = z["people.genes"].astype(float)
@@ -83,7 +91,8 @@ def load_arrays(z) -> dict | None:
         pad = np.repeat(START_GENES[None, genes.shape[1]:], n, axis=0)
         genes = np.concatenate([genes, pad], axis=1)
     p["genes"] = genes
-    p["skill"] = z["people.skill"].astype(np.float32) if "people.skill" in z else np.zeros((n, R), dtype=np.float32)
+    for k, (cols, t) in MATRICES.items():
+        p[k] = z[f"people.{k}"].astype(t) if f"people.{k}" in z else np.zeros((n, cols), dtype=t)
     p["next_id"] = int(z["people.next_id"])
     return p
 
@@ -92,7 +101,8 @@ def fingerprint_arrays(p: dict):
     for k in ARRAYS:
         yield np.ascontiguousarray(p[k]).tobytes()
     yield np.ascontiguousarray(p["genes"]).tobytes()
-    yield np.ascontiguousarray(p["skill"]).tobytes()
+    for k in MATRICES:
+        yield np.ascontiguousarray(p[k]).tobytes()
     yield str(p["next_id"]).encode()
 
 
@@ -129,10 +139,12 @@ def founders(cfg: dict, static: dict, rng: np.random.Generator, tick: int) -> tu
         "pregnant_until": np.full(n, -1, dtype=np.int64), "pregnant_by": np.full(n, -1, dtype=np.int64),
         "last_birth": np.full(n, -10 ** 9, dtype=np.int64), "target": np.full(n, -1, dtype=np.int64),
         "known": np.zeros(n, dtype=np.uint32), "items": np.zeros(n, dtype=np.uint32),
+        "name": np.zeros(n, dtype=np.int64),
         "genes": np.clip(genes, GENE_RANGE[:, 0], GENE_RANGE[:, 1]),
-        "skill": np.zeros((n, p["skill"].shape[1]), dtype=np.float32),
         "next_id": n + 1,
     })
+    for k, (cols, t) in MATRICES.items():
+        p[k] = np.zeros((n, cols), dtype=t)
     return p, cradle
 
 
@@ -168,7 +180,7 @@ def households(p: dict, age_y: np.ndarray) -> np.ndarray:
 def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generator) -> dict:
     """Advance every person by one day. Returns births and deaths for the record."""
     p = world.state["people"]
-    out = {"births": [], "deaths": [], "discoveries": []}
+    out = {"births": [], "deaths": [], "discoveries": [], "words": []}
     n = p["id"].size
     if n == 0:
         return out
@@ -228,6 +240,9 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     need = np.where(age_y < 6, 0.4, np.where(age_y < 15, 0.7, 1.0)) * size ** 0.75
     need *= (1 + 0.15 * genes[:, G["longevity"]]) * (1 + cold)
     need += 0.2 * pregnant + 0.15 * nursing
+    talking = language.enabled(world.cfg)
+    if talking:
+        need *= 1 + 0.1 * genes[:, G["speech"]]               # a talking brain is expensive
 
     pool = np.bincount(head, got, minlength=n)
     pool_need = np.bincount(head, need, minlength=n)
@@ -251,6 +266,8 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     # ── 4. discover, learn, make things ──────────────────────────
     if learning:
         out["discoveries"] = knowledge.daily(world, age_y, fx["fire"], rng)
+    if talking:
+        out["words"] = language.daily(world, age_y, temp_c, rain_mm, rng)
 
     # ── 5. pair up ─────────────────────────────────────────────
     _pair(p, age_y, rng)
@@ -267,7 +284,7 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     p["pregnant_by"] = np.where(conceive, p["partner"], p["pregnant_by"])
 
     due = np.flatnonzero((p["pregnant_until"] == tick) & (p["pregnant_until"] >= 0))
-    newborn = _births(p, due, tick, cfg, rng)
+    newborn = _births(p, due, tick, cfg, rng, naming=talking)
     out["births"] = newborn
 
     # ── 6. death ──────────────────────────────────────────────
@@ -285,6 +302,8 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
         weather = np.ones(n)
         weather[: fx["weather"].size] = fx["weather"]
         yearly *= weather
+    if talking:                        # people who can say "predator!" warn each other
+        prey *= np.where(language.warned(p), 0.6, 1.0)
     h_old, h_pred = yearly / dpy, prey / dpy
     u = rng.random(n)
     dies_hazard = u < h_old + h_pred
@@ -320,6 +339,25 @@ def _move(p, hr, group, supply, crowd, temp_c, world, rng) -> None:
     insul = genes[hr, G["insulation"]]
     social = genes[hr, G["sociability"]]
 
+    # Once people have a word for "us", they'd rather camp among those who use the same word:
+    # people they can understand. (Without language, any company will do.)
+    talking = language.enabled(world.cfg)
+    if talking:
+        us = p["lex"][:, language.MI["people"]].astype(np.int64)
+        named = us > 0
+        keys, kcount = np.unique(p["pos"][named] * language.WORD_SPACE + us[named], return_counts=True)
+        my_us = us[hr]
+
+    def familiar(cells, own, idx, others):
+        if not talking:
+            return others
+        word = my_us[idx]
+        k = cells * language.WORD_SPACE + word
+        j = np.clip(np.searchsorted(keys, k), 0, max(keys.size - 1, 0))
+        hit = (keys.size > 0) & (keys[j] == k) if keys.size else np.zeros(np.shape(k), dtype=bool)
+        f = np.where(hit, kcount[j] if keys.size else 0, 0) - own
+        return np.where(word > 0, np.maximum(f, 0), others)
+
     def appeal(cells, own, idx):
         """How good `cells` look to households `idx` (higher is better)."""
         g = group[idx]
@@ -327,7 +365,9 @@ def _move(p, hr, group, supply, crowd, temp_c, world, rng) -> None:
         food = np.minimum(supply[cells] / (others + g), 4.0) / 4.0
         water = -s["water_dist_c"][cells].astype(float) / 2.0
         comfort = -np.clip(12.0 - 16.0 * insul[idx] - temp_c[cells], 0, None) / 10.0
-        company = social[idx] * np.log1p(np.maximum(others, 0)) / 3.0
+        kin = familiar(cells, own, idx, others)
+        # Company is good; company you can talk to is better.
+        company = social[idx] * (0.6 * np.log1p(np.maximum(others, 0)) + 0.6 * np.log1p(np.maximum(kin, 0))) / 3.0
         crowded = -np.clip(others + g - 25.0, 0, None) / 25.0
         return 1.5 * food + water + 0.6 * comfort + company + crowded
 
@@ -418,7 +458,8 @@ def _pair(p: dict, age_y: np.ndarray, rng: np.random.Generator) -> None:
                 break
 
 
-def _births(p: dict, mothers: np.ndarray, tick: int, cfg: dict, rng: np.random.Generator) -> list:
+def _births(p: dict, mothers: np.ndarray, tick: int, cfg: dict, rng: np.random.Generator,
+            naming: bool = False) -> list:
     if mothers.size == 0:
         return []
     k = mothers.size
@@ -440,6 +481,7 @@ def _births(p: dict, mothers: np.ndarray, tick: int, cfg: dict, rng: np.random.G
         "pregnant_until": np.full(k, -1, dtype=np.int64), "pregnant_by": np.full(k, -1, dtype=np.int64),
         "last_birth": np.full(k, -10 ** 9, dtype=np.int64), "target": np.full(k, -1, dtype=np.int64),
         "known": np.zeros(k, dtype=np.uint32), "items": np.zeros(k, dtype=np.uint32),
+        "name": language.name_children(p, mothers, rng) if naming else np.zeros(k, dtype=np.int64),
     }
     p["energy"][mothers] = np.maximum(p["energy"][mothers] - 0.15, 0)
     p["last_birth"][mothers] = tick
@@ -447,9 +489,11 @@ def _births(p: dict, mothers: np.ndarray, tick: int, cfg: dict, rng: np.random.G
     for key, arr in new.items():
         p[key] = np.concatenate([p[key], arr])
     p["genes"] = np.concatenate([p["genes"], child_genes])
-    p["skill"] = np.concatenate([p["skill"], np.zeros((k, p["skill"].shape[1]), dtype=np.float32)])
+    for key, (cols, t) in MATRICES.items():
+        p[key] = np.concatenate([p[key], np.zeros((k, cols), dtype=t)])
     return [(int(new_ids[j]), int(new["mother"][j]), int(new["father"][j]), int(new["sex"][j]),
-             int(new["pos"][j]), int(new["gen"][j]), child_genes[j].round(4).tolist()) for j in range(k)]
+             int(new["pos"][j]), int(new["gen"][j]), child_genes[j].round(4).tolist(),
+             language.name_str(int(new["name"][j]))) for j in range(k)]
 
 
 def _remove(p: dict, rows: np.ndarray) -> None:
@@ -458,4 +502,5 @@ def _remove(p: dict, rows: np.ndarray) -> None:
     for key in ARRAYS:
         p[key] = p[key][keep]
     p["genes"] = p["genes"][keep]
-    p["skill"] = p["skill"][keep]
+    for key in MATRICES:
+        p[key] = p[key][keep]

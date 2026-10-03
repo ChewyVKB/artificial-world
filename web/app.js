@@ -37,6 +37,10 @@ const RAMPS = {
   wood: [[0, .16, .17, .16], [1, .30, .60, .25]],
 };
 const PERSON = [1.0, 0.82, 0.45];         // how people show up on the map
+// Distinct colours for languages (by language id).
+const LANG_RGB = [[.95, .55, .35], [.40, .75, .95], [.70, .90, .40], [.90, .45, .80], [.98, .85, .35], [.45, .90, .80],
+  [.85, .35, .40], [.60, .55, .95], [.95, .70, .60], [.55, .80, .55], [.80, .80, .80], [.35, .55, .85]];
+const langColor = (id) => LANG_RGB[(id - 1) % LANG_RGB.length];
 const LEGENDS = {
   plants: ["Vegetation", "bare", "lush"],
   grazers: ["Grazing herds (density)", "none", "dense"],
@@ -113,12 +117,12 @@ async function loadFrame() {
   const r = await fetch("/api/frame");
   const tick = +r.headers.get("X-Tick");
   const buf = await r.arrayBuffer();
-  if (buf.byteLength !== S.N * 8) return;          // world switched mid-flight
+  if (buf.byteLength !== S.N * 9) return;          // world switched mid-flight
   S.frame = new Uint8Array(buf);
   S.tick = tick;
   paint();
 }
-const L = (k) => S.frame.subarray(k * S.N, (k + 1) * S.N);   // 0 plants 1 grazers 2 predators 3 snow 4 temp 5 rain 6 people
+const L = (k) => S.frame.subarray(k * S.N, (k + 1) * S.N);   // 0 plants 1 grazers 2 predators 3 snow 4 temp 5 rain 6 people 7 knowledge 8 language
 
 // ── colouring (shared by 3D and 2D) ───────────────────────────
 function cellColor(i, out) {
@@ -132,6 +136,12 @@ function cellColor(i, out) {
   if (lake) return mix(BIOME_RGB[1], BIOME_RGB[1], 0, out);
   const f = S.frame;
   const layer = S.layer;
+  if (layer === "language" && f) {
+    const id = f[8 * S.N + i];
+    if (id) { const c = langColor(id); out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; }
+    else { out[0] = .16; out[1] = .17; out[2] = .16; }
+    return out;
+  }
   if (layer === "biome") {
     out[0] = BIOME_RGB[b][0]; out[1] = BIOME_RGB[b][1]; out[2] = BIOME_RGB[b][2];
   } else if (layer === "natural" || !f) {
@@ -261,7 +271,7 @@ function updatePeople3D() {
   }
   three.people.count = k;
   three.people.instanceMatrix.needsUpdate = true;
-  three.people.visible = S.layer !== "people";
+  three.people.visible = !["people", "knowledge", "language"].includes(S.layer);
 }
 
 function resize() {
@@ -313,7 +323,7 @@ function paint() {
   } else if (S.view === "2d" && flat.img) {
     const d = flat.img.data;
     const shadeOn = S.layer === "natural" || S.layer === "biome";
-    const ppl = S.frame && S.layer !== "people" ? S.frame.subarray(6 * S.N, 7 * S.N) : null;
+    const ppl = S.frame && !["people", "knowledge", "language"].includes(S.layer) ? S.frame.subarray(6 * S.N, 7 * S.N) : null;
     for (let i = 0; i < S.N; i++) {
       cellColor(i, tmp);
       if (ppl && ppl[i]) mix(tmp, PERSON, Math.min(1, 0.85 + ppl[i] / 40), tmp);
@@ -335,6 +345,13 @@ function paint() {
 
 function drawLegend() {
   const el = $("legend");
+  if (S.layer === "language") {
+    const langs = (S.languages || []).filter((l) => !l.died_year);
+    el.innerHTML = "<div>Languages spoken (most common in each place)</div>" + (langs.length
+      ? langs.map((l) => `<div><span class="sw" style="background:rgb(${langColor(l.id).map((v) => v * 255 | 0)})"></span>${escapeHtml(l.name)}</div>`).join("")
+      : "<div class='muted'>none yet</div>");
+    return;
+  }
   if (S.layer === "natural" || S.layer === "biome") {
     const used = new Set(S.biome);
     el.innerHTML = `<div>${S.layer === "natural" ? "Natural colours · bare ground = brown · snow = white" : "Biomes"}</div><div class="grid">` +
@@ -374,7 +391,7 @@ $("inspector").addEventListener("click", async (e) => {
 });
 
 const kv = (rows) => `<dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
-const link = (r, label) => r ? `<a href="#" data-person="${r.id}">${label ?? "#" + r.id}</a>${r.alive ? "" : ' <span class="muted">†</span>'}` : "—";
+const link = (r, label) => r ? `<a href="#" data-person="${r.id}">${label ?? (r.name ? escapeHtml(r.name) : "#" + r.id)}</a>${r.alive ? "" : ' <span class="muted">†</span>'}` : "—";
 const bar = (v) => `<span class="meter"><span style="width:${Math.round(v * 100)}%"></span></span>`;
 
 async function refreshInspector() {
@@ -401,7 +418,7 @@ async function refreshInspector() {
   if (here.length) {
     const shown = here.slice(0, 40);
     people = `<h4>${here.length} ${here.length === 1 ? "person" : "people"} here</h4><ul class="plist">${shown.map((p) =>
-      `<li><a href="#" data-person="${p.id}">#${p.id}</a><span>${p.sex === "female" ? "♀" : "♂"} ${p.age} yrs</span>${bar(p.health)}</li>`).join("")}</ul>` +
+      `<li><a href="#" data-person="${p.id}">${p.name ? escapeHtml(p.name) : "#" + p.id}</a><span>${p.sex === "female" ? "♀" : "♂"} ${p.age} yrs</span>${bar(p.health)}</li>`).join("")}</ul>` +
       (here.length > shown.length ? `<div class="muted small">…and ${here.length - shown.length} more</div>` : "");
   }
   $("inspectBody").innerHTML = kv(rows) + people;
@@ -420,6 +437,7 @@ function renderPerson(p) {
   if (p.alive) {
     rows.push(["Age", `${p.age} years`], ["Health", bar(p.health)], ["Fed", bar(p.energy)], ["Water", bar(p.hydration)]);
     if (p.pregnant) rows.push(["", "expecting a child"]);
+    if (p.vocabulary) rows.push(["Speaks", p.speaks ? escapeHtml(p.speaks) : (p.vocabulary.length ? "a few words of their own" : "no words yet")]);
     rows.push(["Travels with", `${p.household_size} ${p.household_size === 1 ? "person" : "people"}`],
               ["Where", `${p.location.x}, ${p.location.y}`]);
   } else {
@@ -428,13 +446,13 @@ function renderPerson(p) {
   rows.push(["Mother", link(p.mother)], ["Father", link(p.father)]);
   if (p.alive) rows.push(["Partner", link(p.partner)]);
   const kids = p.children.length
-    ? p.children.map((c) => link(c, `#${c.id}${c.sex === "female" ? "♀" : "♂"}`)).join(" ")
+    ? p.children.map((c) => link(c, `${c.name ? escapeHtml(c.name) : "#" + c.id}${c.sex === "female" ? "♀" : "♂"}`)).join(" ")
     : "none";
   const traits = p.traits ? Object.entries(p.traits).map(([k, v]) =>
     [k, `${bar(k === "size" ? (v - 0.6) / 0.8 : v)} ${v.toFixed(2)}`]) : [];
   $("inspectBody").innerHTML = `
     <div class="person-head">
-      <span class="pid">#${p.id}</span>${p.alive ? "" : '<span class="muted"> · died</span>'}
+      <span class="pid">${p.name ? escapeHtml(p.name) : "#" + p.id}</span>${p.name ? `<span class="muted small">#${p.id}</span>` : ""}${p.alive ? "" : '<span class="muted"> · died</span>'}
       <span class="spacer"></span>
       ${p.alive ? `<button data-action="follow" class="${S.follow ? "on" : ""}">${S.follow ? "Following" : "Follow"}</button>` : ""}
       <button data-action="back">Back</button>
@@ -443,8 +461,10 @@ function renderPerson(p) {
     <h4>Children (${p.children.length})</h4><div class="kids">${kids}</div>
     ${p.knows ? `<h4>Knows how to make (${p.knows.length})</h4>${p.knows.length ? kv(p.knows.map((k) => [k.name, bar(k.skill)])) : '<div class="muted small">nothing yet</div>'}` : ""}
     ${p.carrying && p.carrying.length ? `<h4>Carrying</h4><div class="small">${p.carrying.map(escapeHtml).join(" · ")}</div>` : ""}
+    ${p.vocabulary && p.vocabulary.length ? `<h4>Their words (${p.vocabulary.length})</h4><div class="vocab">${p.vocabulary.map((v) =>
+      `<span title="${escapeHtml(v.meaning)} · ${Math.round(v.sure * 100)}% sure"><b>${escapeHtml(v.word)}</b> ${escapeHtml(v.meaning)}</span>`).join("")}</div>` : ""}
     ${traits.length ? `<h4>Inherited traits</h4>${kv(traits)}` : ""}
-    <p class="muted small">People have no names yet — names need a language, and language hasn't been invented.</p>`;
+    ${p.name ? "" : `<p class="muted small">${p.vocabulary ? "No name — their mother had too few words to name a child." : "People have no names yet — names need a language, and language hasn't been invented."}</p>`}`;
 }
 
 function followCamera(x, y) {
@@ -502,10 +522,10 @@ function fmt(v) {
   return v >= 10 ? Math.round(v) + "" : v.toFixed(1);
 }
 
-const TRAIT_COLORS = { size: "#e4e7e5", insulation: "#6fb3e0", fertility: "#e07a9f", longevity: "#b39ddb", wanderlust: "#e2b65c", sociability: "#7bc96f", curiosity: "#5fd3c4" };
+const TRAIT_COLORS = { size: "#e4e7e5", insulation: "#6fb3e0", fertility: "#e07a9f", longevity: "#b39ddb", wanderlust: "#e2b65c", sociability: "#7bc96f", curiosity: "#5fd3c4", speech: "#f0a0ff" };
 async function refreshCharts() {
   const traitNames = Object.keys(TRAIT_COLORS).map((t) => "trait_" + t).join(",");
-  const m = await api(`/api/metrics?names=grazers,predators,vegetation_pct,drought_area_pct,population,births_per_year,deaths_per_year,techniques_known,techniques_per_person,${traitNames}&points=400`);
+  const m = await api(`/api/metrics?names=grazers,predators,vegetation_pct,drought_area_pct,population,births_per_year,deaths_per_year,techniques_known,techniques_per_person,languages,words_per_person,${traitNames}&points=400`);
   const s = m.series, css = getComputedStyle(document.documentElement);
   const hasPeople = (s.population || []).length > 0;
   $("peopleCharts").hidden = !hasPeople;
@@ -519,6 +539,15 @@ async function refreshCharts() {
       label: t === "size" ? "size*" : t, color,
       data: (s["trait_" + t] || []).map(([k, v]) => [k, t === "size" ? (v - 0.6) / 0.8 : v]),
     })), m.days_per_year, { ymax: 1 });
+  }
+  const hasLanguage = (s.words_per_person || []).length > 0;
+  $("languageCard").hidden = !hasLanguage;
+  if (hasLanguage) {
+    lineChart($("chartLanguage"), [
+      { label: "languages", color: "#f0a0ff", data: s.languages || [] },
+      { label: "words per person", color: "#ffc46b", data: s.words_per_person || [] },
+    ], m.days_per_year);
+    refreshLanguages();
   }
   const hasKnowledge = (s.techniques_known || []).length > 0;
   $("knowledgeCard").hidden = !hasKnowledge;
@@ -541,7 +570,7 @@ async function refreshCharts() {
 
 async function refreshHistory() {
   const ev = await api("/api/events?limit=120");
-  $("history").innerHTML = ev.map((e) => `<li class="${/EXTINCT|FAMINE|PEOPLE|NEW_LAND|FIRST_BIRTH|GROUPS|CREATED|POPULATION|DISCOVERY|LOST/.test(e.type) ? "major" : ""}">${escapeHtml(e.title)}</li>`).join("")
+  $("history").innerHTML = ev.map((e) => `<li class="${/EXTINCT|FAMINE|PEOPLE|NEW_LAND|FIRST_BIRTH|GROUPS|CREATED|POPULATION|DISCOVERY|LOST|WORD|NAME|LANGUAGE/.test(e.type) ? "major" : ""}">${escapeHtml(e.title)}</li>`).join("")
     || `<li class="muted">Nothing notable yet.</li>`;
 }
 const escapeHtml = (t) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -611,6 +640,29 @@ for (const [id, view] of [["view3d", "3d"], ["view2d", "2d"]]) {
 window.addEventListener("keydown", (e) => {
   if (e.code === "Space" && !["INPUT", "SELECT"].includes(document.activeElement.tagName)) { e.preventDefault(); $("btnPlay").click(); }
 });
+
+async function refreshLanguages() {
+  const L = await api("/api/languages");
+  if (!L.enabled) return;
+  S.languages = L.languages;
+  if (S.layer === "language") drawLegend();
+  const living = L.languages.filter((l) => !l.died_year).sort((a, b) => b.speakers - a.speakers);
+  const dead = L.languages.filter((l) => l.died_year);
+  const row = (l) => `<li class="lang ${l.died_year ? "dead" : ""}">
+      <details ${S.openLang === l.id ? "open" : ""} data-lang="${l.id}">
+        <summary><span class="sw" style="background:rgb(${langColor(l.id).map((v) => v * 255 | 0)})"></span>
+          <span class="lname">${escapeHtml(l.name)}</span>
+          <span class="lstat">${l.died_year ? `spoken until year ${l.died_year}` : `${l.speakers.toLocaleString()} speakers · ${l.words.length} words`}</span></summary>
+        <div class="lsub">since year ${l.born_year}${l.parent ? ` · drifted from ${escapeHtml(l.parent)}` : ""}</div>
+        <div class="vocab">${l.words.map((w) => `<span><b>${escapeHtml(w.word)}</b> ${escapeHtml(w.meaning)}</span>`).join("")}</div>
+      </details></li>`;
+  $("langList").innerHTML = (living.map(row).join("") || `<li class="muted small">No shared language yet — people have only a few words of their own.</li>`)
+    + (dead.length ? `<li class="muted small" style="margin-top:6px">No longer spoken</li>` + dead.slice(-8).reverse().map(row).join("") : "");
+}
+$("langList").addEventListener("toggle", (e) => {
+  const d = e.target.closest("details");
+  if (d) S.openLang = d.open ? +d.dataset.lang : (S.openLang === +d.dataset.lang ? null : S.openLang);
+}, true);
 
 async function refreshKnowledge() {
   const k = await api("/api/knowledge");

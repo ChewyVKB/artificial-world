@@ -6,7 +6,8 @@ simple rules, instead of being scripted.
 
 > **North star:** define the rules of the universe, not the civilization that emerges from it.
 
-**Stage 3: Learning** is here — see [About knowledge](#about-knowledge) below.
+**Stage 4: Language** is here — see [About language](#about-language) below.
+Stage 3 (learning) is described in [About knowledge](#about-knowledge).
 
 **Stage 2: People** (also included): On top of the living landscape from Stage 1
 (continents, rivers, climate, seasons, droughts, vegetation, grazing herds,
@@ -108,6 +109,7 @@ famines, which lands get settled — comes out of those rules.
 | wanderlust | finding new land | more aimless movement |
 | sociability | staying near others | crowding |
 | curiosity | discovering things | less time foraging |
+| speech | talking, faithful copying of words | needs more food (brain) |
 
 People don't have names: names need a language, and language hasn't been
 invented yet (Stage 4). They're known by number.
@@ -147,6 +149,44 @@ Knowledge **fades if it isn't practised**, and it's **lost** when nobody
 living knows it — a group that moves away from clay forgets pottery. It can be
 rediscovered later, by anyone. The Knowledge panel shows each technique's
 status, when and by whom it was first worked out, and how often it's been lost.
+
+## About language
+
+Nothing about any actual language is built in — only the *ability* to make
+sounds, link a sound to something two people are both looking at, and copy
+each other. Every word in the world was coined by someone in it.
+
+- **Talking.** People in the same place talk about what matters right there:
+  the river, a herd, a predator, the cold, a technique they know (26 things in
+  all). If a speaker has no word for it, they may make one up.
+- **Spreading.** A listener who uses a different word may switch to the
+  speaker's (children nearly always do). Words nobody uses are forgotten.
+- **Changing.** Copying isn't perfect — now and then a sound slips (*ka*→*ga*,
+  *u*→*o*), and occasionally someone coins a new way of saying an old thing.
+  Who you happen to talk to decides which version wins, so a group's speech
+  slowly drifts. Groups that rarely meet drift apart: first dialects, then
+  separate languages.
+- **Mattering.** People who share words teach each other techniques far more
+  easily, and a shared word for "predator" lets them warn each other (fewer
+  deaths). People prefer to camp among those they can understand. A new
+  heritable trait, **speech**, makes people talk more and copy words more
+  faithfully — at the cost of a hungrier brain. Whether it's worth it is up to
+  evolution.
+- **Names.** Once a mother has a few words she names her children, using the
+  sounds of her own speech. People without names are shown by number.
+
+**Languages are found by the observer, not declared by the simulation.** Each
+year it listens region by region (~40 km squares), groups regions that
+understand each other (sharing at least half their words, allowing for a
+slipped sound), and compares the result with last year's. A new language is
+only announced once it has held together for 5 years, and a language is only
+declared dead after 5 years without a trace. A language is named after its own
+word for "us" (or, if that's taken, its next free word).
+
+In the viewer: the **Languages** panel lists every language with its speakers,
+where it came from, and its dictionary; **Show → Languages** maps where each is
+spoken; a person's page shows their name, which language they speak, and every
+word they know.
 
 ## Deleting worlds
 
@@ -203,6 +243,7 @@ aworld/
   ecology.py   plants → grazers → predators, snow
   people.py    individual humans: senses, movement, food, water, family, birth, death
   knowledge.py materials, what they can become, and discovering/teaching/forgetting it
+  language.py  sounds, coining and copying words, sound change, names, finding languages
   observer.py  measures the world and writes history (read-only)
   storage.py   checkpoints, thinning, storage cap, history database
   runner.py    keeps the world ticking in the background
@@ -230,7 +271,7 @@ Design rules the code follows:
 | **1. The World** ✅ | terrain, rivers, climate, seasons, plants & animals, save/rewind, 3D viewer | a living landscape |
 | **2. People** ✅ | needs, foraging, aging, births, families, death, inherited traits | bands surviving or starving |
 | **3. Learning** ✅ | skills, imitation, material "chemistry", tools, knowledge that can be lost | discoveries spreading and dying out |
-| 4. Language | invented words, shared vocabularies, dialects | groups that drift apart in speech |
+| **4. Language** ✅ | invented words, shared vocabularies, dialects | groups that drift apart in speech |
 | 5. Society | sharing, reputation, conflict, group identity | bands forming, splitting, allying |
 | 6. Settling | storage, replanting, shelter, building | first camps that stop moving |
 | 7. Civilization | property, trade, specialization, leadership | villages, chiefdoms — or collapse |

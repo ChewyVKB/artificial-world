@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import knowledge as kn
+from . import language as lg
 from .ecology import BIOMES
 from .people import CAUSES, G, GENES
 from .world import World
@@ -73,12 +74,12 @@ def measure_knowledge(world: World) -> dict:
     return m
 
 
-def find_groups(world: World) -> list[tuple[int, int]]:
-    """Clusters of people living within ~2 days' walk of each other.
-    Returns [(size, a cell in the group)], largest first."""
+def group_labels(world: World) -> np.ndarray:
+    """For each person, a label shared by everyone living within ~2 days' walk
+    of each other (a chain of occupied cells, with one empty cell of slack)."""
     p = world.state["people"]
     if p["id"].size == 0:
-        return []
+        return np.zeros(0, dtype=np.int64)
     nbr8 = world.static["neighbours8"]
     occupied = np.unique(p["pos"])
     area = np.unique(np.concatenate([occupied, nbr8[:, occupied].ravel()]))   # occupied + 1-cell margin
@@ -94,10 +95,33 @@ def find_groups(world: World) -> list[tuple[int, int]]:
         if np.array_equal(nl, label[area]):
             break
         label[area] = nl
-    counts = {}
-    for lab, c in zip(*np.unique(label[p["pos"]], return_counts=True)):
-        counts[int(lab)] = int(c)
-    return sorted(((c, lab) for lab, c in counts.items()), reverse=True)
+    return label[p["pos"]]
+
+
+def find_groups(world: World) -> list[tuple[int, int]]:
+    """Clusters of people living within ~2 days' walk of each other.
+    Returns [(size, a cell in the group)], largest first."""
+    labels = group_labels(world)
+    if labels.size == 0:
+        return []
+    labs, counts = np.unique(labels, return_counts=True)
+    return sorted(((int(c), int(l)) for l, c in zip(labs, counts)), reverse=True)
+
+
+def who(world: World, pid: int) -> str:
+    """'Tika (#446)' if the person has a name, else '#446'."""
+    from .people import index_of
+    p = world.state.get("people")
+    if p is not None and "name" in p:
+        r = index_of(p["id"], np.array([pid]))[0]
+        if r >= 0 and p["name"][r]:
+            return f"{lg.name_str(int(p['name'][r]))} (#{pid})"
+    return f"#{pid}"
+
+
+CONFIRM_YEARS = 5            # censuses in a row before a new language is announced
+GONE_YEARS = 5               # censuses without a trace before a language is declared dead
+CANDIDATE_MIN_SPEAKERS = 25
 
 
 class Observer:
@@ -113,8 +137,11 @@ class Observer:
         learning = world.has_people and kn.enabled(world.cfg)
         if world.has_people:
             events += self._count_people(world, flows.get("people", {}))
+        talking = world.has_people and lg.enabled(world.cfg)
         if learning:
             events += self._discoveries(world, flows.get("people", {}).get("discoveries", []))
+        if talking:
+            events += self._words(world, flows.get("people", {}))
         metrics = {}
         if world.tick % metrics_every == 0:
             metrics = measure(world, flows)
@@ -122,6 +149,10 @@ class Observer:
                 metrics.update(measure_people(world))
             if learning:
                 metrics.update(measure_knowledge(world))
+            if talking:
+                p = world.state["people"]
+                metrics["words_per_person"] = float((p["lex"] > 0).sum(axis=1).mean()) if p["id"].size else 0.0
+                metrics["languages"] = float(len(self.living_languages()))
         if world.day_of_year == 0:
             events += self._yearly(world, metrics or measure(world, flows))
             if world.has_people:
@@ -130,6 +161,8 @@ class Observer:
                 events += ev
             if learning:
                 events += self._yearly_knowledge(world)
+            if talking:
+                events += self._yearly_language(world)
         return metrics, events
 
     # ── knowledge ──────────────────────────────────────────────
@@ -143,13 +176,13 @@ class Observer:
                 tech[rec["key"]] = {"first_year": world.year, "first_by": pid, "first_cell": cell,
                                     "lost_year": None, "times_lost": 0}
                 ev.append({"tick": world.tick, "type": "DISCOVERY", "major": True,
-                           "title": f"Year {world.year}: #{pid} works out {rec['name'].lower()} — a first for this world",
+                           "title": f"Year {world.year}: {who(world, pid)} works out {rec['name'].lower()} — a first for this world",
                            "data": {"technique": rec["key"], "person": pid, "cell": cell}})
             elif t["lost_year"] is not None:
                 gap = world.year - t["lost_year"]
                 t["lost_year"] = None
                 ev.append({"tick": world.tick, "type": "REDISCOVERY", "major": True,
-                           "title": f"Year {world.year}: #{pid} rediscovers {rec['name'].lower()}, lost {gap} years ago",
+                           "title": f"Year {world.year}: {who(world, pid)} rediscovers {rec['name'].lower()}, lost {gap} years ago",
                            "data": {"technique": rec["key"], "person": pid, "cell": cell, "years_lost": gap}})
         return ev
 
@@ -166,6 +199,125 @@ class Observer:
                            "title": f"Year {world.year}: {rec['name'].lower()} is lost — no one living knows it any more",
                            "data": {"technique": rec["key"]}})
         return ev
+
+    # ── language ───────────────────────────────────────────────
+    def living_languages(self) -> list[dict]:
+        return [l for l in self.memory.get("languages", []) if l.get("status", "alive") == "alive"]
+
+    def _words(self, world: World, today: dict) -> list[dict]:
+        mem, ev = self.memory, []
+        words = today.get("words", [])
+        if words and not mem.get("first_word"):
+            pid, m, code = words[0]
+            mem["first_word"] = True
+            ev.append({"tick": world.tick, "type": "FIRST_WORD", "major": True,
+                       "title": f"Year {world.year}: #{pid} says the first word ever spoken — "
+                                f"“{lg.word_str(code)}”, meaning {lg.MEANINGS[m][1]}",
+                       "data": {"person": pid, "word": lg.word_str(code), "meaning": lg.MEANINGS[m][0]}})
+        for b in today.get("births", []):
+            if len(b) > 7 and b[7] and not mem.get("first_name"):
+                mem["first_name"] = True
+                ev.append({"tick": world.tick, "type": "FIRST_NAME", "major": True,
+                           "title": f"Year {world.year}: a child is given a name for the first time — {b[7]}",
+                           "data": {"person": b[0], "name": b[7]}})
+        return ev
+
+    def _yearly_language(self, world: World) -> list[dict]:
+        """Yearly census of languages: match this year's to those already known,
+        and notice new languages, splits and deaths.
+
+        To avoid crying wolf over a few families on the fringe, a new language
+        must show up in CONFIRM_YEARS censuses in a row before it's announced,
+        and a language must go unheard for GONE_YEARS before it's declared dead."""
+        mem, ev = self.memory, []
+        reg = mem.setdefault("languages", [])
+        p = world.state["people"]
+        found = [f for f in lg.detect(p, lg.region_labels(world))]
+        known = [l for l in reg if l.get("status", "alive") in ("alive", "candidate")]
+        t, yr = world.tick, world.year
+
+        def add(kind, title, **data):
+            ev.append({"tick": t, "type": kind, "title": title, "data": data, "major": True})
+
+        claimed: dict[int, list] = {}
+        unclaimed = []
+        if known and found:
+            sim = lg.similarity(np.array([f["words"] for f in found]), np.array([l["words"] for l in known]))
+            for i in range(len(found)):
+                j = int(np.argmax(sim[i]))
+                (claimed.setdefault(j, []) if sim[i, j] >= 0.4 else unclaimed).append(i if sim[i, j] >= 0.4 else (i, None))
+        else:
+            unclaimed = [(i, None) for i in range(len(found))]
+        for j, idxs in claimed.items():
+            # The biggest matching group carries the language on; others that matched it
+            # but no longer understand that group may be splitting off.
+            idxs.sort(key=lambda i: -found[i]["speakers"])
+            keep = idxs[0]
+            l = known[j]
+            l.update(words=[int(x) for x in found[keep]["words"]], speakers=found[keep]["speakers"],
+                     regions=found[keep]["regions"], census_year=yr, seen=l.get("seen", 0) + 1, missed=0)
+            for i in idxs[1:]:
+                unclaimed.append((i, l["id"] if l.get("status", "alive") == "alive" else l.get("parent")))
+        for i, parent in unclaimed:
+            f = found[i]
+            if f["speakers"] < CANDIDATE_MIN_SPEAKERS:
+                continue
+            lid = mem.get("next_language_id", 1)
+            mem["next_language_id"] = lid + 1
+            reg.append({"id": lid, "name": None, "status": "candidate", "born_year": yr, "parent": parent,
+                        "died_year": None, "words": [int(x) for x in f["words"]], "speakers": f["speakers"],
+                        "regions": f["regions"], "census_year": yr, "seen": 1, "missed": 0})
+        claimed_ids = {known[j]["id"] for j in claimed}
+        for l in known:
+            if l["id"] not in claimed_ids:
+                l["missed"] = l.get("missed", 0) + 1
+                l["seen"] = 0
+        # Promote, retire, forget.
+        names = {l["name"] for l in reg if l.get("name")}
+        alive_before = any(l.get("status", "alive") == "alive" or l.get("died_year") for l in reg if l.get("name"))
+        for l in list(reg):
+            status = l.get("status", "alive")
+            if status == "candidate" and l["seen"] >= CONFIRM_YEARS:
+                l["status"] = "alive"
+                l["name"] = self._language_name(l["words"], names)
+                names.add(l["name"])
+                parent = next((x for x in reg if x["id"] == l["parent"] and x.get("name")), None)
+                if parent is not None:
+                    add("LANGUAGE_SPLIT", f"Year {yr}: {l['name']} has drifted apart from {parent['name']} — "
+                                          f"{l['speakers']} people now speak a language of their own",
+                        language=l["name"], parent=parent["name"])
+                elif not alive_before:
+                    add("FIRST_LANGUAGE", f"Year {yr}: the first language takes shape — {l['speakers']} people "
+                                          f"share {sum(1 for w in l['words'] if w)} words. They call themselves “{l['name']}”",
+                        language=l["name"])
+                    alive_before = True
+                else:
+                    add("LANGUAGE_EMERGED", f"Year {yr}: a new language, {l['name']}, takes shape among "
+                                            f"{l['speakers']} people", language=l["name"])
+            elif status == "candidate" and l["missed"] >= 2:
+                reg.remove(l)
+            elif status == "alive" and l.get("missed", 0) >= GONE_YEARS:
+                l.update(status="dead", died_year=yr, regions=[], speakers=0)
+                add("LANGUAGE_DIED", f"Year {yr}: {l['name']} is no longer spoken", language=l["name"])
+        return ev
+
+    @staticmethod
+    def _language_name(words, taken: set) -> str:
+        """A language is named by its own word for "us" — or, if that's missing or
+        already the name of another language, by the next of its own words that is
+        free (its word for water, plants, the river...). Related languages keep
+        sharing some words, so this keeps their names distinct."""
+        order = [lg.MI[k] for k in ("people", "water", "plant", "river", "herd", "eat", "child", "mother")]
+        order += [m for m in range(lg.M) if m not in order]
+        options = [lg.name_str(int(words[m])) for m in order if int(words[m])]
+        for name in options:
+            if name not in taken and len(name) >= 2:
+                return name
+        base = options[0] if options else "Unnamed"
+        k = 2
+        while f"{base} {k}" in taken:
+            k += 1
+        return f"{base} {k}"
 
     # ── people ─────────────────────────────────────────────────
     def _count_people(self, world: World, today: dict) -> list[dict]:

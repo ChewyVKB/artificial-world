@@ -54,6 +54,7 @@
         <option value="rain">Rain vs. normal</option>
         <option value="people">People</option>
         <option value="knowledge">Knowledge</option>
+        <option value="language">Languages</option>
         <option value="stone">Flint</option>
         <option value="clay">Clay</option>
         <option value="wood">Wood</option>
@@ -89,6 +90,13 @@
     <section class="card" id="inspector">
       <h3>Inspector</h3>
       <div id="inspectBody"><div class="muted">Click anywhere on the land — or on a cluster of people.</div></div>
+    </section>
+
+    <section class="card" id="languageCard" hidden>
+      <h3>Languages <small>every word was invented by someone here</small></h3>
+      <canvas class="chart" id="chartLanguage" height="100"></canvas>
+      <ul class="langs" id="langList"></ul>
+      <div class="muted small">A language is named after its own word for “us”. Click one to see its words.</div>
     </section>
 
     <section class="card" id="knowledgeCard" hidden>
