@@ -132,6 +132,7 @@ def make_handler(runner: Runner):
             b = self._body()
             action = b.get("action")
             if action == "play":
+                runner.error = None
                 runner.running = True
             elif action == "pause":
                 runner.running = False

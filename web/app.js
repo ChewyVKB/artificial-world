@@ -536,6 +536,8 @@ function applyStatus(st) {
   $("sVeg").textContent = `${st.now.vegetation_pct}%`;
   $("sSpeed").textContent = st.running ? `${fmt(st.days_per_sec)} d/s` : "paused";
   $("pauseMajor").checked = st.pause_on_major;
+  $("errorBanner").hidden = !st.error;
+  $("errorBanner").textContent = st.error ? `${st.error} — check the log with: docker compose logs` : "";
   const sto = st.storage;
   $("storage").textContent = `Disk: ${(sto.world_bytes / 1e6).toFixed(1)} MB of ${(sto.cap_bytes / 1e9).toFixed(0)} GB cap · ${sto.checkpoints} checkpoints`;
   if (st.last_major && st.last_major.tick !== S.lastMajorTick) {

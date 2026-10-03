@@ -96,7 +96,9 @@ def step(state: dict, static: dict, cfg: dict, temperature: np.ndarray,
     feeding = G * P / (P + 0.15)
     eaten = np.minimum(e["grazer_appetite"] * feeding, P)
     P -= eaten
-    G += e["grazer_growth"] * feeding - e["grazer_death"] * G * (1 + 2 * covered + G / e["grazer_crowding"])
+    # Crowding (disease, competition) — absent in worlds created before it existed, so they stay unchanged.
+    crowding = G / e["grazer_crowding"] if "grazer_crowding" in e else 0.0
+    G += e["grazer_growth"] * feeding - e["grazer_death"] * G * (1 + 2 * covered + crowding)
     np.clip(G, 0, None, out=G)
 
     # Predators hunt grazers.

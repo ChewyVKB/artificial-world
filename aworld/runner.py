@@ -46,6 +46,7 @@ class Runner:
         self.store: WorldStore | None = None
         self.observer = Observer()
         self.last_major: dict | None = None
+        self.error: str | None = None      # set if the simulation crashes; shown in the viewer
 
     # ── world management ───────────────────────────────────────
     def open_latest_or_create(self) -> None:
@@ -125,12 +126,19 @@ class Runner:
             if days == 0:
                 time.sleep(0.01)
                 continue
-            with self.lock:
-                for _ in range(days):
-                    if not self.running:
-                        break
-                    self._advance_one_day()
-                tick = self.world.tick
+            try:
+                with self.lock:
+                    for _ in range(days):
+                        if not self.running:
+                            break
+                        self._advance_one_day()
+                    tick = self.world.tick
+            except Exception as exc:          # never die silently: pause and tell the viewer
+                import traceback
+                traceback.print_exc()
+                self.error = f"The simulation stopped because of an error: {exc!r}"
+                self.running = False
+                continue
             # Real throughput, measured about once a second.
             if now - mark_time >= 1.0:
                 rate_now = (tick - mark_tick) / (now - mark_time)
@@ -199,6 +207,7 @@ class Runner:
                           "sim_version": meta["sim_version"], "width": w.shape[1], "height": w.shape[0]},
                 "tick": w.tick, "year": w.year, "day_of_year": w.day_of_year, "days_per_year": w.dpy,
                 "running": self.running, "speed": self.speed, "speeds": list(SPEEDS),
+                "error": self.error,
                 "pause_on_major": self.pause_on_major,
                 "days_per_sec": round(self.measured_days_per_sec, 1),
                 "last_major": self.last_major,

@@ -141,6 +141,26 @@ class TestRunnerAndServer(unittest.TestCase):
         self.assertEqual(self.runner.world.tick, 500)
         self.assertEqual(self.runner.world.state_hash(), past)
 
+    def test_background_thread_advances_time(self):
+        import time
+        self.runner.start_thread()
+        self.runner.speed = "max"
+        self.runner.running = True
+        time.sleep(1.5)
+        self.runner.running = False
+        self.runner._stop.set()
+        self.assertGreater(self.runner.world.tick, 30)
+        self.assertIsNone(self.runner.error)
+
+    def test_worlds_saved_by_older_versions_still_run(self):
+        # Stage 1 worlds were saved without later settings (e.g. grazer crowding, people).
+        cfg = load_config(overrides=SMALL)
+        del cfg["ecology"]["grazer_crowding"]
+        del cfg["people"]
+        w = World.create(cfg)
+        w.run(400)
+        self.assertGreater(w.state["grazers"].sum(), 0)
+
     def test_history_is_recorded(self):
         self.runner.step_days(360 * 3)
         series = self.runner.store.metric_series(["grazers"])
