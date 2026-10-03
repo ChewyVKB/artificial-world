@@ -84,7 +84,8 @@ is closed and after the VM reboots.
 What a person *can* do, each day:
 
 - sense the land around them (food, which way water lies, warmth, other people)
-- walk one cell (~4 km)
+- move camp: when food around camp runs low (or restlessness strikes), scout
+  the land within ~40 km, pick somewhere better and walk there, up to ~12 km a day
 - gather plants and hunt grazing animals — which uses them up
 - drink at rivers and lakes, or from rain
 - pair with another single adult they meet (never close kin)

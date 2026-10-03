@@ -126,12 +126,17 @@ class Runner:
             if days == 0:
                 time.sleep(0.01)
                 continue
+            done = 0
             try:
                 with self.lock:
-                    for _ in range(days):
-                        if not self.running:
-                            break
+                    # Hold the world for at most ~30 ms at a time, so the web page
+                    # never waits long — even when the machine can't keep up.
+                    deadline = time.monotonic() + 0.03
+                    while done < days and self.running:
                         self._advance_one_day()
+                        done += 1
+                        if time.monotonic() > deadline:
+                            break
                     tick = self.world.tick
             except Exception as exc:          # never die silently: pause and tell the viewer
                 import traceback
@@ -139,12 +144,14 @@ class Runner:
                 self.error = f"The simulation stopped because of an error: {exc!r}"
                 self.running = False
                 continue
+            if rate:
+                owed = min(owed + (days - done), rate)   # unfinished days carry over (max 1 s worth)
             # Real throughput, measured about once a second.
             if now - mark_time >= 1.0:
                 rate_now = (tick - mark_tick) / (now - mark_time)
                 self.measured_days_per_sec = max(0.0, rate_now)
                 mark_time, mark_tick = now, tick
-            time.sleep(0.001)   # let the web server in
+            time.sleep(0.003)   # let the web server in
 
     def _advance_one_day(self) -> None:
         world, store = self.world, self.store

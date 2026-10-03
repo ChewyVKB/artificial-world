@@ -92,6 +92,31 @@ class TestPeopleDeterminism(unittest.TestCase):
         finally:
             shutil.rmtree(tmp)
 
+    def test_checkpoints_from_before_travel_still_load(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            w = World.create(cfg())
+            w.run(100)
+            store = WorldStore.create(tmp, w, "old")
+            path = store.write_checkpoint(w, {})
+            with np.load(path) as z:                       # drop the newer field, as old saves lack it
+                data = {k: z[k] for k in z.files if k != "people.target"}
+            np.savez_compressed(path, **data)
+            again, _ = WorldStore(store.root).load_world()
+            self.assertTrue((again.state["people"]["target"] == -1).all())
+            again.run(100)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_households_travel(self):
+        w = World.create(cfg())
+        start = set(w.state["people"]["pos"].tolist())
+        visited = set()
+        for _ in range(360 * 3):
+            w.step()
+            visited |= set(w.state["people"]["pos"].tolist())
+        self.assertGreater(len(visited - start), 40)
+
     def test_worlds_without_people_still_work(self):
         c = cfg()
         del c["people"]

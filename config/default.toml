@@ -52,6 +52,9 @@ hunt_cost = 0.0008           # how many grazing animals one day's food uses up
 conception_rate = 0.006      # daily chance of conceiving for a healthy couple
 mutation = 0.02              # how much a child's traits drift from its parents'
 predator_danger = 0.15       # how deadly predators are to people
+scouting_radius = 10         # how far (cells, ~4 km each) people know the land around camp
+travel_cells_per_day = 3     # how far a household walks in a day when moving camp
+move_when_food_below = 1.5   # move camp when local food per person drops below this
 
 [storage]
 checkpoint_every_days = 360  # save a full snapshot this often (360 = once per year)

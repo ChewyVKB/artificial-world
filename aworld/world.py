@@ -171,6 +171,8 @@ def add_derived(static: dict) -> dict:
             nbr8[k] = np.where(j >= 0, j, np.arange(cells.size))
         static["neighbours8"] = nbr8
         static["compact_of"] = lookup
+    if "cy_c" not in static:
+        static["cy_c"], static["cx_c"] = (a.astype(np.int64) for a in np.divmod(cells, W))
     if "water_c" not in static:
         water = static["river"] | static["lake"]
         near = water.copy()

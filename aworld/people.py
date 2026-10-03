@@ -43,6 +43,7 @@ ARRAYS = {   # name -> dtype; one entry per living person
     "energy": np.float64, "hydration": np.float64, "health": np.float64,
     "mother": np.int64, "father": np.int64, "partner": np.int64, "gen": np.int32,
     "pregnant_until": np.int64, "pregnant_by": np.int64, "last_birth": np.int64,
+    "target": np.int64,     # where this household is heading (a cell), or -1
 }
 
 
@@ -64,7 +65,9 @@ def save_arrays(p: dict) -> dict:
 def load_arrays(z) -> dict | None:
     if "people.id" not in z:
         return None
-    p = {k: z[f"people.{k}"].astype(t) for k, t in ARRAYS.items()}
+    n = z["people.id"].size
+    p = {k: (z[f"people.{k}"].astype(t) if f"people.{k}" in z else np.full(n, -1, dtype=t))
+         for k, t in ARRAYS.items()}                    # fields added later default to -1
     p["genes"] = z["people.genes"].astype(float)
     p["next_id"] = int(z["people.next_id"])
     return p
@@ -108,7 +111,7 @@ def founders(cfg: dict, static: dict, rng: np.random.Generator, tick: int) -> tu
         "mother": mothers, "father": np.full(n, -1, dtype=np.int64),
         "partner": np.full(n, -1, dtype=np.int64), "gen": np.zeros(n, dtype=np.int32),
         "pregnant_until": np.full(n, -1, dtype=np.int64), "pregnant_by": np.full(n, -1, dtype=np.int64),
-        "last_birth": np.full(n, -10 ** 9, dtype=np.int64),
+        "last_birth": np.full(n, -10 ** 9, dtype=np.int64), "target": np.full(n, -1, dtype=np.int64),
         "genes": np.clip(genes, GENE_RANGE[:, 0], GENE_RANGE[:, 1]),
         "next_id": n + 1,
     })
@@ -168,29 +171,10 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
 
     # ── 1. move ─────────────────────────────────────────────────
     head = households(p, age_y)
-    is_head = head == np.arange(n)
-    hr = np.flatnonzero(is_head)
+    hr = np.flatnonzero(head == np.arange(n))                 # household heads decide for everyone
     group = np.bincount(head, minlength=n)[hr].astype(float)
-    here = p["pos"][hr]
-    cand = nbr8[:, here]                                      # (9, heads): stay + 8 neighbours
-    cand = np.vstack([here[None, :], cand])
-    others = crowd[cand] - np.where(np.arange(9)[:, None] == 0, group[None, :], 0)
-    food = np.minimum(supply[cand] / (others + group[None, :]), 3.0) / 3.0
-    thirst = 1.0 - p["hydration"][hr]
-    cold_lim = 12.0 - 16.0 * genes[hr, G["insulation"]]
-    comfort = -np.clip(cold_lim[None, :] - temp_c[cand], 0, None) / 10.0
-    social = genes[hr, G["sociability"]][None, :] * np.log1p(np.maximum(others, 0)) / 3.0
-    crowded = -np.clip(others + group[None, :] - 25.0, 0, None) / 25.0
-    noise = rng.normal(0, 1, cand.shape) * (0.05 + 0.35 * genes[hr, G["wanderlust"]])[None, :]
-    # People know roughly which way water lies (they can see rivers, follow animals to it).
-    wdist = s["water_dist_c"][cand].astype(float)
-    water = -(0.25 + 2.5 * thirst[None, :]) * wdist / 1.5
-    score = 1.5 * food + water + 0.6 * comfort + social + crowded + noise
-    score[0] += 0.15                                          # moving costs effort
-    choice = cand[np.argmax(score, axis=0), np.arange(hr.size)]
-    new_pos = p["pos"].copy()
-    new_pos[hr] = choice
-    p["pos"] = new_pos[head]                                  # households move together
+    _move(p, hr, group, supply, crowd, temp_c, world, rng)
+    p["pos"] = p["pos"][head]                                 # households move together
 
     # ── 2. gather, hunt, share ──────────────────────────────────
     pos = p["pos"]
@@ -274,6 +258,93 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     return out
 
 
+def _move(p, hr, group, supply, crowd, temp_c, world, rng) -> None:
+    """Where each household goes today.
+
+    Foragers don't drift at random: when the food around camp runs low (or
+    restlessness strikes), they scout the land within a couple of days' walk,
+    pick somewhere better, and walk there over the following days, up to
+    ~12 km a day. Otherwise they make small moves around camp. Thirst
+    overrides everything.
+    """
+    s, cfg = world.static, world.cfg["people"]
+    genes = p["genes"]
+    radius = int(cfg.get("scouting_radius", 10))
+    speed = int(cfg.get("travel_cells_per_day", 3))
+    low_food = float(cfg.get("move_when_food_below", 1.5))
+    nbr8, cy, cx = s["neighbours8"], s["cy_c"], s["cx_c"]
+    H, W = world.shape
+    here = p["pos"][hr]
+    target = p["target"][hr]
+    thirst = 1.0 - p["hydration"][hr]
+    wander = genes[hr, G["wanderlust"]]
+    insul = genes[hr, G["insulation"]]
+    social = genes[hr, G["sociability"]]
+
+    def appeal(cells, own, idx):
+        """How good `cells` look to households `idx` (higher is better)."""
+        g = group[idx]
+        others = crowd[cells] - own
+        food = np.minimum(supply[cells] / (others + g), 4.0) / 4.0
+        water = -s["water_dist_c"][cells].astype(float) / 2.0
+        comfort = -np.clip(12.0 - 16.0 * insul[idx] - temp_c[cells], 0, None) / 10.0
+        company = social[idx] * np.log1p(np.maximum(others, 0)) / 3.0
+        crowded = -np.clip(others + g - 25.0, 0, None) / 25.0
+        return 1.5 * food + water + 0.6 * comfort + company + crowded
+
+    # Decide to look for a new camp.
+    per_head = supply[here] / np.maximum(crowd[here], 1.0)
+    restless = rng.random(hr.size) < 0.004 + 0.03 * wander
+    looking = (target < 0) & ((per_head < low_food) | restless) & (thirst < 0.6)
+    if looking.any():
+        L = np.flatnonzero(looking)
+        k = 16
+        oy = rng.integers(-radius, radius + 1, (k, L.size))
+        ox = rng.integers(-radius, radius + 1, (k, L.size))
+        ny = np.clip(cy[here[L]][None, :] + oy, 0, H - 1)
+        nx = np.clip(cx[here[L]][None, :] + ox, 0, W - 1)
+        cand = s["compact_of"][ny * W + nx]
+        ok = cand >= 0
+        cand = np.where(ok, cand, here[L][None, :])
+        dist = np.maximum(np.abs(oy), np.abs(ox))
+        score = appeal(cand, 0.0, L) - 0.3 * dist / radius
+        score = np.where(ok, score, -np.inf)
+        best = np.argmax(score, axis=0)
+        cur = appeal(here[L], group[L], L)
+        better = score[best, np.arange(L.size)] > cur + 0.1
+        target[L] = np.where(better, cand[best, np.arange(L.size)], -1)
+
+    # Very thirsty households abandon plans and head for water.
+    target = np.where(thirst >= 0.6, -1, target)
+
+    # Travel toward targets, a few cells a day; others make small local moves.
+    pos = here.copy()
+    for _ in range(speed):
+        T = np.flatnonzero(target >= 0)
+        if T.size == 0:
+            break
+        opts = np.vstack([pos[T][None, :], nbr8[:, pos[T]]])        # stay + 8 neighbours
+        d = np.maximum(np.abs(cy[opts] - cy[target[T]][None, :]), np.abs(cx[opts] - cx[target[T]][None, :]))
+        d = d + rng.random(opts.shape) * 0.5                         # break ties, wiggle around obstacles
+        pick = opts[np.argmin(d, axis=0), np.arange(T.size)]
+        stuck = pick == pos[T]
+        pos[T] = pick
+        arrived = pos[T] == target[T]
+        target[T[arrived | stuck]] = -1
+
+    local = np.flatnonzero((target < 0) & (pos == here))
+    if local.size:
+        opts = np.vstack([pos[local][None, :], nbr8[:, pos[local]]])
+        sc = np.vstack([appeal(opts[j], group[local] if j == 0 else 0.0, local) for j in range(9)])
+        sc += (thirst[local] * -s["water_dist_c"][opts].astype(float) * 2.0)
+        sc += rng.normal(0, 1, sc.shape) * (0.05 + 0.25 * wander[local])[None, :]
+        sc[0] += 0.25                                               # settling in: small moves only if worth it
+        pos[local] = opts[np.argmax(sc, axis=0), np.arange(local.size)]
+
+    p["pos"][hr] = pos
+    p["target"][hr] = target
+
+
 def _pair(p: dict, age_y: np.ndarray, rng: np.random.Generator) -> None:
     """Single adults who meet in the same place may pair up (never with close kin)."""
     partner_row = index_of(p["id"], p["partner"])
@@ -328,7 +399,7 @@ def _births(p: dict, mothers: np.ndarray, tick: int, cfg: dict, rng: np.random.G
         "partner": np.full(k, -1, dtype=np.int64),
         "gen": (np.maximum(p["gen"][mothers], father_gen) + 1).astype(np.int32),
         "pregnant_until": np.full(k, -1, dtype=np.int64), "pregnant_by": np.full(k, -1, dtype=np.int64),
-        "last_birth": np.full(k, -10 ** 9, dtype=np.int64),
+        "last_birth": np.full(k, -10 ** 9, dtype=np.int64), "target": np.full(k, -1, dtype=np.int64),
     }
     p["energy"][mothers] = np.maximum(p["energy"][mothers] - 0.15, 0)
     p["last_birth"][mothers] = tick
