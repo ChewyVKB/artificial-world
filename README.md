@@ -44,8 +44,18 @@ docker compose pull
 docker compose up -d
 ```
 
-On first start, `config/default.toml` (the world's settings) is created next
-to the compose file for you to edit, and worlds are saved in `data/`.
+Settings for the container go in an optional `.env` file next to
+`docker-compose.yml` (see `.env.example`):
+
+| Variable | Default | What it does |
+|---|---|---|
+| `PUID` / `PGID` | 1000 | the user/group that owns the saved files (run `id` on the host to see yours) |
+| `TZ` | UTC | time zone for log times, e.g. `America/Chicago` |
+| `APP_DATA_DIR` | `./App-Data` | where `DWS/data` (worlds) and `DWS/config` (settings) are kept |
+
+On first start, `DWS/config/default.toml` (the world's settings) is created for
+you to edit. The container reports its health at `/health`, so
+`docker compose ps` shows **healthy** once the world is running.
 
 **If the repository is private**, the image is private too, so log in once
 first: create a GitHub *personal access token (classic)* with only the
@@ -59,10 +69,11 @@ artificial-world → Package settings → Change visibility.)
 ```bash
 git clone https://github.com/ChewyVKB/artificial-world.git
 cd artificial-world
+# add "build: ." under the service in docker-compose.yml first
 docker compose up -d --build
 ```
 
-Either way, open **http://&lt;your-vm-ip&gt;:8080** in a browser on your PC
+Either way, open **http://&lt;your-vm-ip&gt;:8285** in a browser on your PC
 (find the VM's IP with `hostname -I`). The world runs in the background from
 now on, even when the page is closed and after the VM reboots.
 
@@ -76,8 +87,8 @@ now on, even when the page is closed and after the VM reboots.
 | Start again | `docker compose start` |
 | Update to the newest image | `docker compose pull && docker compose up -d` |
 | Update by building from code | `git pull && docker compose up -d --build` |
-| Run the tests | `docker compose run --rm world python -m unittest discover -s tests -t .` |
-| Measure speed on your hardware | `docker compose run --rm world python -m aworld bench --years 10` |
+| Run the tests | `docker compose run --rm dynamic-world-system python -m unittest discover -s tests -t .` |
+| Measure speed on your hardware | `docker compose run --rm dynamic-world-system python -m aworld bench --years 10` |
 
 ---
 

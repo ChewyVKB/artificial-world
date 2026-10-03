@@ -1,17 +1,27 @@
 services:
-  world:
+  dynamic-world-system:
     # The ready-made image built by GitHub Actions on every push to main.
     image: ghcr.io/chewyvkb/artificial-world:latest
-    # Optional: build it yourself from this folder instead (docker compose up -d --build).
-    build: .
-    container_name: artificial-world
+    # Optional: build it yourself from a checkout of the repo instead:
+    #   add "build: ." here, then run: docker compose up -d --build
+    container_name: dynamic-world-system
     restart: unless-stopped          # keeps running after reboots — the world never stops
+    environment:
+      - PUID=${PUID:-1000}           # files in the data/config folders are owned by this user...
+      - PGID=${PGID:-1000}           # ...and group (run `id` on the host to see yours)
+      - TZ=${TZ:-UTC}                # time zone for log times, e.g. America/Chicago
     ports:
-      - "8080:8080"                  # open http://<vm-ip>:8080 on your PC
+      - "8285:8080"                  # open http://<vm-ip>:8285 on your PC
     volumes:
-      - ./data:/app/data             # your worlds live in the "data" folder next to this file
-      - ./config:/app/config         # settings for new worlds (filled with defaults on first start)
+      - ${APP_DATA_DIR:-./App-Data}/DWS/data:/app/data       # your worlds
+      - ${APP_DATA_DIR:-./App-Data}/DWS/config:/app/config   # settings for new worlds (filled with defaults on first start)
     stop_grace_period: 30s           # gives the world time to save when stopping
     # Safety limits so the world can never hog the VM.
-    cpus: 2
-    mem_limit: 4g
+    cpus: 4
+    mem_limit: 8g
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s              # first start generates a world; give it a moment

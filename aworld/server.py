@@ -1,6 +1,7 @@
 """A small web server (Python standard library only) for watching the world.
 
     GET  /                      the viewer web page
+    GET  /health                "ok" if the simulation is alive (for Docker health checks)
     GET  /api/status            time, speed, headline numbers
     GET  /api/terrain           unchanging map layers (binary)
     GET  /api/frame             current living layers (binary): plants, grazers,
@@ -95,6 +96,13 @@ def make_handler(runner: Runner):
         def r_status(self, q):
             self._json(runner.status())
 
+        def r_health(self, q):
+            """For health checks: answers instantly, without waiting for the world."""
+            alive = runner._thread is not None and runner._thread.is_alive()
+            ok = alive and runner.error is None
+            self._send(b"ok\n" if ok else b"simulation stopped\n", "text/plain",
+                       HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE)
+
         def r_terrain(self, q):
             st = runner.status()
             self._send(runner.terrain_bytes(), "application/octet-stream",
@@ -186,6 +194,7 @@ def make_handler(runner: Runner):
 
     ROUTES = {
         ("GET", "/api/status"): Handler.r_status,
+        ("GET", "/health"): Handler.r_health,
         ("GET", "/api/terrain"): Handler.r_terrain,
         ("GET", "/api/frame"): Handler.r_frame,
         ("GET", "/api/metrics"): Handler.r_metrics,

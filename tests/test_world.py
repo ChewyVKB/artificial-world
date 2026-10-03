@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -187,6 +188,10 @@ class TestRunnerAndServer(unittest.TestCase):
                     return json.loads(r.read())
 
             self.assertEqual(json.loads(get("/api/status"))["world"]["width"], 64)
+            with self.assertRaises(urllib.error.HTTPError):       # sim thread not running in this test
+                get("/health")
+            self.runner.start_thread()
+            self.assertEqual(get("/health"), b"ok\n")
             self.assertEqual(len(get("/api/terrain")), 64 * 64 * 7)
             self.assertEqual(len(get("/api/frame")), 64 * 64 * 9)
             self.assertEqual(post("/api/control", {"action": "step", "days": 30})["tick"], 30)
