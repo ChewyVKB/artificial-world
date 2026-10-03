@@ -1,5 +1,8 @@
 services:
   world:
+    # The ready-made image built by GitHub Actions on every push to main.
+    image: ghcr.io/chewyvkb/artificial-world:latest
+    # Optional: build it yourself from this folder instead (docker compose up -d --build).
     build: .
     container_name: artificial-world
     restart: unless-stopped          # keeps running after reboots — the world never stops
@@ -7,8 +10,8 @@ services:
       - "8080:8080"                  # open http://<vm-ip>:8080 on your PC
     volumes:
       - ./data:/app/data             # your worlds live in the "data" folder next to this file
-      - ./config:/app/config         # edit config/default.toml without rebuilding
+      - ./config:/app/config         # settings for new worlds (filled with defaults on first start)
     stop_grace_period: 30s           # gives the world time to save when stopping
-    # Safety limits so the world can never hog the VM. Stage 1 needs ~1 core and well under 1 GB.
+    # Safety limits so the world can never hog the VM.
     cpus: 2
-    mem_limit: 2g
+    mem_limit: 4g

@@ -22,7 +22,7 @@ puts on it.
 
 ## Quick start (on your Ubuntu VM)
 
-You need **Docker** and **git**. If you don't have them yet:
+You need **Docker**. If you don't have it yet:
 
 ```bash
 sudo apt update && sudo apt install -y git ca-certificates curl
@@ -30,29 +30,52 @@ curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker $USER      # then log out and back in
 ```
 
-Get the code and start the world:
+### Option A — use the ready-made image (recommended)
+
+Every push to `main` is tested and built into an image by GitHub Actions
+(see `.github/workflows/docker.yml`) and published as
+`ghcr.io/chewyvkb/artificial-world:latest`. You only need a folder with a
+`docker-compose.yml` in it:
 
 ```bash
-git clone https://github.com/<your-username>/artificial-world.git
+mkdir artificial-world && cd artificial-world
+curl -fsSLO https://raw.githubusercontent.com/ChewyVKB/artificial-world/main/docker-compose.yml   # or copy it over
+docker compose pull
+docker compose up -d
+```
+
+On first start, `config/default.toml` (the world's settings) is created next
+to the compose file for you to edit, and worlds are saved in `data/`.
+
+**If the repository is private**, the image is private too, so log in once
+first: create a GitHub *personal access token (classic)* with only the
+`read:packages` scope, then run
+`docker login ghcr.io -u ChewyVKB` and paste the token as the password.
+(Or make the package public: GitHub → your profile → Packages →
+artificial-world → Package settings → Change visibility.)
+
+### Option B — build it yourself from the code
+
+```bash
+git clone https://github.com/ChewyVKB/artificial-world.git
 cd artificial-world
 docker compose up -d --build
 ```
 
-Open **http://&lt;your-vm-ip&gt;:8080** in a browser on your PC.
-(Find the VM's IP with `hostname -I`.)
-
-That's it. The world runs in the background from now on, even when the page
-is closed and after the VM reboots.
+Either way, open **http://&lt;your-vm-ip&gt;:8080** in a browser on your PC
+(find the VM's IP with `hostname -I`). The world runs in the background from
+now on, even when the page is closed and after the VM reboots.
 
 ### Everyday commands
 
-| What | Command (run inside the `artificial-world` folder) |
+| What | Command (run in the folder with `docker-compose.yml`) |
 |---|---|
 | See if it's running | `docker compose ps` |
 | See its log | `docker compose logs -f` |
 | Stop (saves first) | `docker compose stop` |
 | Start again | `docker compose start` |
-| Get updates from GitHub | `git pull && docker compose up -d --build` |
+| Update to the newest image | `docker compose pull && docker compose up -d` |
+| Update by building from code | `git pull && docker compose up -d --build` |
 | Run the tests | `docker compose run --rm world python -m unittest discover -s tests -t .` |
 | Measure speed on your hardware | `docker compose run --rm world python -m aworld bench --years 10` |
 

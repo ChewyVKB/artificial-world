@@ -38,6 +38,8 @@ def cmd_serve(args) -> int:
     from .runner import Runner
     from .server import serve
 
+    from .config import ensure_config
+    ensure_config(args.config)
     runner = Runner(args.data, args.config)
     runner.open_latest_or_create()
     runner.running = bool(args.autoplay)
