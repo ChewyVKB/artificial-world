@@ -113,10 +113,17 @@ def name_str(code: int) -> str | None:
     return s.capitalize() if s else None
 
 
+WORD_LENGTHS = (0.12, 0.5, 0.38)     # how often a new word has 1, 2 or 3 syllables (like early languages: mostly 2)
+
+
 def random_words(rng: np.random.Generator, k: int, pool: np.ndarray | None = None,
-                 lengths=(1, 4)) -> np.ndarray:
-    """k new words of 1–3 syllables; syllables drawn from `pool` if given (a language's own sounds)."""
-    n = rng.integers(lengths[0], lengths[1], k)
+                 lengths=None) -> np.ndarray:
+    """k new words; syllables drawn from `pool` if given (a language's own sounds).
+    `lengths` = (min, max+1) syllables, uniformly; by default mostly two-syllable words."""
+    if lengths is None:
+        n = rng.choice(np.arange(1, 4), k, p=WORD_LENGTHS)
+    else:
+        n = rng.integers(lengths[0], lengths[1], k)
     if pool is not None and pool.size:
         syl = pool[rng.integers(0, pool.size, (k, MAXSYL))]
     else:
@@ -230,6 +237,8 @@ def daily(world, age_y: np.ndarray, temp_c: np.ndarray, rain_mm: np.ndarray, rng
     for _ in range(int(world.cfg["language"].get("rounds_per_day", 1))):
         out += _talk(world, age_y, temp_c, rain_mm, rng)
     p = world.state["people"]
+    if world.tick % 30 == 0:
+        drop_homonyms(p)
     # Unused words fade, and are forgotten.
     p["lexs"] *= 0.9993
     gone = (p["lexs"] < 0.03) & (p["lex"] > 0)
@@ -277,9 +286,19 @@ def _talk(world, age_y, temp_c, rain_mm, rng) -> list:
         # No word yet? Maybe make one up.
         coin = (ws == 0) & (rng.random(L.size) < lc["invent_rate"] * (0.2 + speech[sp]))
         if coin.any():
+            who = sp[coin]
             new = random_words(rng, int(coin.sum()))
             if "accent" in p:
-                new = apply_accent(new, p["accent"][sp[coin]])
+                new = apply_accent(new, p["accent"][who])
+            # Nobody coins a word they already use for something else.
+            for _ in range(6):
+                clash = (lex[who] == new[:, None]).any(axis=1)
+                if not clash.any():
+                    break
+                fresh_words = random_words(rng, int(clash.sum()))
+                if "accent" in p:
+                    fresh_words = apply_accent(fresh_words, p["accent"][who[clash]])
+                new[clash] = fresh_words
             ws[coin] = new
             lex[sp[coin], m[coin]] = new
             strength[sp[coin], m[coin]] = 0.3
@@ -289,13 +308,13 @@ def _talk(world, age_y, temp_c, rain_mm, rng) -> list:
         # of these die out; a few catch on locally. This keeps vocabularies turning over.
         fresh = (ws > 0) & (rng.random(L.size) < lc.get("innovate_rate", 0.0))
         if fresh.any():
-            alt = random_words(rng, int(fresh.sum()), lengths=(1, 4))
+            alt = random_words(rng, int(fresh.sum()))
             ws[fresh] = alt
             lex[sp[fresh], m[fresh]] = alt
             strength[sp[fresh], m[fresh]] = 0.35
 
         said = ws > 0
-        sp, hr, m, ws = sp[said], hr[said], m[said], ws[said]
+        sp, hr, m, ws, L = sp[said], hr[said], m[said], ws[said], L[said]
         wh = lex[hr, m].astype(np.int64)
         same = wh == ws
         # Understood: both grow more sure of the word.
@@ -305,9 +324,22 @@ def _talk(world, age_y, temp_c, rain_mm, rng) -> list:
         # happen to talk to matters more than how sure anyone is, so a new way of
         # saying something can, by chance, spread through a whole community —
         # which is how languages slowly change.
+        #
+        # People also go with the majority (conformist learning): a listener checks
+        # the word against what a few others around them say. A word most people
+        # nearby use is taken up readily; an odd one out rarely is.
         d = ~same
         child = age_y[hr[d]] < 12
-        p_adopt = np.minimum(np.where(wh[d] == 0, 0.9, lc.get("switch_rate", 0.25)) * np.where(child, 2.0, 1.0), 1.0)
+        base = np.where(wh[d] == 0, 0.9, lc.get("switch_rate", 0.25) * 2) * np.where(child, 2.0, 1.0)
+        k = int(lc.get("conformity_sample", 4))
+        Ld = L[d]
+        others = order[start[Ld][None, :] + rng.integers(0, np.maximum(size[Ld], 1)[None, :], (k, Ld.size))]
+        heard = lex[others, m[d][None, :]].astype(np.int64)
+        n_s = 1 + (heard == ws[d][None, :]).sum(axis=0)           # the speaker + others saying it their way
+        n_h = 1 + (heard == wh[d][None, :]).sum(axis=0)           # the listener + others saying it theirs
+        a = float(lc.get("conformity", 2.0))
+        majority = n_s ** a / (n_s ** a + n_h ** a)
+        p_adopt = np.minimum(np.where(wh[d] == 0, base, base * majority), 1.0)
         adopt = rng.random(d.sum()) < p_adopt
         ah, am, aw = hr[d][adopt], m[d][adopt], ws[d][adopt]
         # Copying isn't perfect: sometimes a sound slips.
@@ -317,12 +349,37 @@ def _talk(world, age_y, temp_c, rain_mm, rng) -> list:
             aw[j] = _shift(int(aw[j]), rng)
         if "accent" in p:                       # the listener says it their own way
             aw = apply_accent(aw, p["accent"][ah])
+        # A word that would sound the same as one the listener already uses for
+        # something else would only confuse: such words aren't taken up.
+        clash = (lex[ah] == aw[:, None]).any(axis=1) & (lex[ah, am] != aw)
+        ah, am, aw = ah[~clash], am[~clash], aw[~clash]
         lex[ah, am] = aw
         strength[ah, am] = 0.25
         # Saying a word keeps it fresh in the speaker's mind.
         strength[sp, m] = np.minimum(strength[sp, m] + 0.05, 1.0)
 
     return invented
+
+
+def drop_homonyms(p: dict) -> int:
+    """If someone uses one word for two different things, the meaning they're less
+    sure of loses it (they'll pick up or coin another word for it). Returns how
+    many words were dropped."""
+    lex, strength = p["lex"], p["lexs"]
+    srt = np.sort(lex, axis=1)
+    rows = np.flatnonzero(((srt[:, 1:] == srt[:, :-1]) & (srt[:, 1:] > 0)).any(axis=1))
+    dropped = 0
+    for r in rows:
+        words, inv, counts = np.unique(lex[r], return_inverse=True, return_counts=True)
+        for wi in np.flatnonzero((counts > 1) & (words > 0)):
+            ms = np.flatnonzero(inv == wi)
+            keep = ms[np.argmax(strength[r, ms])]
+            for m_ in ms:
+                if m_ != keep:
+                    lex[r, m_] = 0
+                    strength[r, m_] = 0
+                    dropped += 1
+    return dropped
 
 
 # ── what language is good for ──────────────────────────────────────────

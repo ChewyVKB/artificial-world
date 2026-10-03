@@ -55,6 +55,21 @@ class TestLanguageInWorld(unittest.TestCase):
         vals, counts = np.unique(w[w > 0], return_counts=True)
         self.assertGreater(counts.max() if counts.size else 0, 5)
 
+    def test_hardly_any_homonyms(self):
+        """One word, one meaning: a word that would clash with another is avoided."""
+        p = self.w.state["people"]
+        srt = np.sort(p["lex"], axis=1)
+        clashes = ((srt[:, 1:] == srt[:, :-1]) & (srt[:, 1:] > 0)).any(axis=1)
+        self.assertLess(clashes.mean(), 0.05)
+
+    def test_people_speak_like_their_community(self):
+        """People living together share nearly all their words (conformist learning)."""
+        p = self.w.state["people"]
+        _, inv, _, usual, _ = lg.dictionaries(p["lex"], p["pos"], min_share=0)
+        has = p["lex"] > 0
+        agree = ((p["lex"] == usual[inv]) & has).sum() / has.sum()
+        self.assertGreater(agree, 0.85)
+
     def test_newborns_have_no_words(self):
         p = self.w.state["people"]
         babies = (self.w.tick - p["birth"]) < 30

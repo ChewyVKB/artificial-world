@@ -196,7 +196,15 @@ copy each other. Every word in the world was coined by someone in it.
   so far. The list only grows: whenever the world gains something new to talk
   about (a new invention, later), people can coin words for it too.
 - **Spreading.** A listener who uses a different word may switch to the
-  speaker's (children nearly always do). Words nobody uses are forgotten.
+  speaker's (children nearly always do). People go with the majority
+  (*conformist learning*): a word most people around you use is taken up
+  readily, an odd one out rarely — so a community ends up sharing nearly all
+  its words. Words nobody uses are forgotten.
+- **One word, one meaning.** Nobody coins a word they already use for something
+  else, a word that would clash with one you already use isn't taken up, and
+  if someone does end up with one word for two things, the weaker meaning loses
+  it. Most new words have two syllables, as in early languages, which leaves
+  plenty of room for distinct words.
 - **Changing.** Copying isn't perfect: now and then a sound slips, and now and
   then someone coins a new way of saying an old thing. Who you happen to talk
   to decides which version wins, so a community's words slowly turn over.
