@@ -15,7 +15,7 @@ import hashlib
 
 import numpy as np
 
-from . import SIM_VERSION, climate, ecology, terrain
+from . import SIM_VERSION, climate, ecology, people, terrain
 from .config import config_fingerprint
 from .rng import stream
 
@@ -67,8 +67,16 @@ class World:
                 self.cfg, self.state["anomaly"], self.year, self.static["cells"])
         temp, rain_factor, rain_mm = self.weather_today()
         flows = ecology.step(self.state, self.static, self.cfg, temp, rain_factor, rain_mm)
+        if self.has_people:
+            rng = stream(self.cfg["world"]["seed"], "people", self.tick)
+            flows["people"] = people.step(self, temp, rain_mm, rng)
         self.state["tick"] = self.tick + 1
         return flows
+
+    @property
+    def has_people(self) -> bool:
+        """Worlds made before Stage 2 have no people and keep running exactly as before."""
+        return "people" in self.state
 
     def run(self, days: int) -> None:
         for _ in range(days):
@@ -95,6 +103,9 @@ class World:
         h.update(str(self.tick).encode())
         for name in DYNAMIC_FIELDS:
             h.update(np.ascontiguousarray(self.state[name]).tobytes())
+        if self.has_people:
+            for chunk in people.fingerprint_arrays(self.state["people"]):
+                h.update(chunk)
         return h.hexdigest()
 
 
@@ -116,7 +127,7 @@ def build_static(cfg: dict) -> dict:
     def compact(a):
         return np.ascontiguousarray(a.ravel()[cells], dtype=float)
 
-    return {
+    static = {
         # full-map layers
         "elevation": elevation,
         "ocean": ocean,
@@ -139,13 +150,55 @@ def build_static(cfg: dict) -> dict:
         "hemisphere_c": compact(np.sign(lat)),
         "capacity_c": compact(capacity),
     }
+    return add_derived(static)
+
+
+def add_derived(static: dict) -> dict:
+    """Layers computed from the saved landscape. Recomputed on load, so worlds
+    saved by older versions gain them automatically."""
+    hab = static["habitable"]
+    H, W = hab.shape
+    cells = static["cells"]
+    if "neighbours8" not in static:
+        lookup = np.full(H * W, -1, dtype=np.int64)
+        lookup[cells] = np.arange(cells.size)
+        ys, xs = np.divmod(cells, W)
+        nbr8 = np.empty((8, cells.size), dtype=np.int64)
+        for k, (dy, dx) in enumerate(((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))):
+            ny, nx = ys + dy, xs + dx
+            inside = (ny >= 0) & (ny < H) & (nx >= 0) & (nx < W)
+            j = np.where(inside, lookup[np.clip(ny, 0, H - 1) * W + np.clip(nx, 0, W - 1)], -1)
+            nbr8[k] = np.where(j >= 0, j, np.arange(cells.size))
+        static["neighbours8"] = nbr8
+        static["compact_of"] = lookup
+    if "water_c" not in static:
+        water = static["river"] | static["lake"]
+        near = water.copy()
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                near |= np.roll(np.roll(water, dy, 0), dx, 1)
+        static["water_c"] = near.ravel()[cells]
+    if "water_dist_c" not in static:
+        # Days of walking to the nearest fresh water (capped at 30).
+        dist = np.full(cells.size, 30, dtype=np.int16)
+        frontier = np.flatnonzero(static["water_c"])
+        dist[frontier] = 0
+        d = 0
+        while frontier.size and d < 29:
+            d += 1
+            nxt = np.unique(static["neighbours8"][:, frontier].ravel())
+            nxt = nxt[dist[nxt] > d]
+            dist[nxt] = d
+            frontier = nxt
+        static["water_dist_c"] = dist
+    return static
 
 
 def initial_state(cfg: dict, static: dict) -> dict:
     n = static["cells"].size
     rng = stream(cfg["world"]["seed"], "init.life")
     K = static["capacity_c"]
-    return {
+    state = {
         "tick": 0,
         "plants": K * rng.uniform(0.3, 0.8, n),
         "grazers": 0.05 * K * rng.uniform(0.5, 1.5, n),     # start near a natural balance
@@ -153,3 +206,6 @@ def initial_state(cfg: dict, static: dict) -> dict:
         "snow": np.zeros(n),
         "anomaly": climate.next_anomaly(cfg, np.zeros(n), 0, static["cells"]),
     }
+    if "people" in cfg:
+        state["people"], _ = people.founders(cfg, static, stream(cfg["world"]["seed"], "init.people"), 0)
+    return state

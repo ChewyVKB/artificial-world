@@ -35,10 +35,23 @@ grazer_growth = 0.015        # how efficiently grazing animals turn plants into 
 grazer_death = 0.004         # daily death rate of grazers
 grazer_appetite = 0.012      # how much vegetation grazers eat per day
 grazer_spread = 0.10         # how fast grazers wander into neighbouring land
+grazer_crowding = 0.15       # density at which crowding doubles grazer deaths (disease, competition)
 predator_growth = 0.015      # how efficiently predators turn prey into offspring
 predator_death = 0.003       # daily death rate of predators
 predator_appetite = 0.03     # how much prey predators catch per day
 predator_spread = 0.06       # how fast predators wander
+
+[people]
+# The first humans. Worlds created without this section have no people.
+start_population = 60        # founders, all starting in one mild, green, well-watered place
+adult_harvest = 2.2          # most food (in "days of eating") an adult can gather/hunt in a day
+plant_food = 10.0            # food a fully green cell offers per day
+plant_cost = 0.0025          # how much vegetation one day's food uses up
+hunt_food = 3.0              # food the herds in a cell offer per day
+hunt_cost = 0.0008           # how many grazing animals one day's food uses up
+conception_rate = 0.006      # daily chance of conceiving for a healthy couple
+mutation = 0.02              # how much a child's traits drift from its parents'
+predator_danger = 0.15       # how deadly predators are to people
 
 [storage]
 checkpoint_every_days = 360  # save a full snapshot this often (360 = once per year)

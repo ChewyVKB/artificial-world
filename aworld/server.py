@@ -3,10 +3,13 @@
     GET  /                      the viewer web page
     GET  /api/status            time, speed, headline numbers
     GET  /api/terrain           unchanging map layers (binary)
-    GET  /api/frame             current living layers (binary)
+    GET  /api/frame             current living layers (binary): plants, grazers,
+                                predators, snow, temperature, rain, people
     GET  /api/metrics           statistics over time (JSON)
     GET  /api/events            the history log (JSON)
     GET  /api/cell?x=&y=        everything about one spot on the map
+    GET  /api/people?x=&y=      the people living in that spot
+    GET  /api/person?id=        one person's life: family, traits, fate
     GET  /api/worlds            all saved worlds
     POST /api/control           {"action": "play"|"pause"|"step"|"speed"|"pause_on_major", ...}
     POST /api/save              save a checkpoint now
@@ -116,6 +119,12 @@ def make_handler(runner: Runner):
         def r_cell(self, q):
             self._json(runner.cell(int(q.get("x", 0)), int(q.get("y", 0))))
 
+        def r_people(self, q):
+            self._json(runner.people_at(int(q.get("x", 0)), int(q.get("y", 0))))
+
+        def r_person(self, q):
+            self._json(runner.person(int(q.get("id", 0))))
+
         def r_worlds(self, q):
             self._json({"current": runner.store.meta["id"], "worlds": list_worlds(runner.worlds_dir)})
 
@@ -167,6 +176,8 @@ def make_handler(runner: Runner):
         ("GET", "/api/events"): Handler.r_events,
         ("GET", "/api/cell"): Handler.r_cell,
         ("GET", "/api/worlds"): Handler.r_worlds,
+        ("GET", "/api/people"): Handler.r_people,
+        ("GET", "/api/person"): Handler.r_person,
         ("POST", "/api/control"): Handler.r_control,
         ("POST", "/api/save"): Handler.r_save,
         ("POST", "/api/seek"): Handler.r_seek,

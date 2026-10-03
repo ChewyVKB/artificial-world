@@ -26,12 +26,13 @@ from pathlib import Path
 
 import numpy as np
 
-from . import SIM_VERSION
-from .world import DYNAMIC_FIELDS, World
+from . import SIM_VERSION, people
+from .world import DYNAMIC_FIELDS, World, add_derived
 
 STATIC_SAVE = ("elevation", "ocean", "lake", "river", "flow", "latitude", "annual_temp",
                "annual_rain", "swing", "habitable", "biome", "plant_capacity", "cells",
-               "neighbours", "annual_temp_c", "annual_rain_c", "swing_c", "hemisphere_c", "capacity_c")
+               "neighbours", "annual_temp_c", "annual_rain_c", "swing_c", "hemisphere_c", "capacity_c",
+               "neighbours8", "compact_of", "water_c", "water_dist_c")
 
 _CKPT = re.compile(r"^t(\d{12})\.npz$")
 
@@ -70,7 +71,7 @@ class WorldStore:
             "config": world.cfg,
         }
         (store.root / "world.json").write_text(json.dumps(meta, indent=2))
-        np.savez_compressed(store.root / "static.npz", **{k: world.static[k] for k in STATIC_SAVE})
+        np.savez_compressed(store.root / "static.npz", **{k: world.static[k] for k in STATIC_SAVE if k in world.static})
         return store
 
     @property
@@ -85,7 +86,7 @@ class WorldStore:
             # Not fatal: the world still loads, but replaying old history may not match exactly.
             print(f"[storage] warning: world made with sim {meta['sim_version']}, running {SIM_VERSION}")
         with np.load(self.root / "static.npz") as z:
-            static = {k: z[k] for k in z.files}
+            static = add_derived({k: z[k] for k in z.files})
         ticks = self.checkpoint_ticks()
         if not ticks:
             raise FileNotFoundError(f"no checkpoints in {self.root}")
@@ -108,7 +109,8 @@ class WorldStore:
     def write_checkpoint(self, world: World, observer: dict) -> Path:
         path = self.checkpoint_path(world.tick)
         buf = io.BytesIO()
-        np.savez_compressed(buf, **{k: world.state[k] for k in DYNAMIC_FIELDS},
+        extra = people.save_arrays(world.state["people"]) if world.has_people else {}
+        np.savez_compressed(buf, **{k: world.state[k] for k in DYNAMIC_FIELDS}, **extra,
                             _tick=np.int64(world.tick),
                             _observer=np.frombuffer(json.dumps(observer).encode(), dtype=np.uint8))
         tmp = path.with_suffix(".tmp")
@@ -120,6 +122,9 @@ class WorldStore:
         with np.load(self.checkpoint_path(tick)) as z:
             state = {k: z[k].astype(float) for k in DYNAMIC_FIELDS}
             state["tick"] = int(z["_tick"])
+            ppl = people.load_arrays(z)
+            if ppl is not None:
+                state["people"] = ppl
             observer = json.loads(z["_observer"].tobytes().decode())
         return state, observer
 
@@ -163,6 +168,12 @@ class WorldStore:
                     title TEXT NOT NULL, data TEXT NOT NULL DEFAULT '{}',
                     UNIQUE (tick, type, title));
                 CREATE INDEX IF NOT EXISTS events_tick ON events(tick);
+                CREATE TABLE IF NOT EXISTS people (
+                    id INTEGER PRIMARY KEY, mother INTEGER, father INTEGER, sex INTEGER,
+                    birth_tick INTEGER, birth_cell INTEGER, generation INTEGER, genes TEXT,
+                    death_tick INTEGER, death_cause TEXT, death_age REAL, death_cell INTEGER);
+                CREATE INDEX IF NOT EXISTS people_mother ON people(mother);
+                CREATE INDEX IF NOT EXISTS people_father ON people(father);
             """)
         return self._db
 
@@ -174,6 +185,34 @@ class WorldStore:
         for e in events:
             db.execute("INSERT OR IGNORE INTO events (tick,type,title,data) VALUES (?,?,?,?)",
                        (e["tick"], e["type"], e["title"], json.dumps(e.get("data", {}))))
+
+    def record_people(self, tick: int, births: list, deaths: list, founders: list | None = None) -> None:
+        """The family record: every birth and every death, forever."""
+        db = self.db
+        rows = list(founders or []) + [(i, m, f, sx, tick, cell, gen, json.dumps(g)) for i, m, f, sx, cell, gen, g in births]
+        if rows:
+            db.executemany("INSERT OR IGNORE INTO people (id,mother,father,sex,birth_tick,birth_cell,generation,genes) "
+                           "VALUES (?,?,?,?,?,?,?,?)", rows)
+        if deaths:
+            db.executemany("UPDATE people SET death_tick=?, death_cause=?, death_age=?, death_cell=? WHERE id=?",
+                           [(tick, people.CAUSES[c], round(a, 2), cell, i) for i, c, a, cell in deaths])
+
+    def person_record(self, pid: int) -> dict | None:
+        row = self.db.execute("SELECT id,mother,father,sex,birth_tick,birth_cell,generation,genes,"
+                              "death_tick,death_cause,death_age,death_cell FROM people WHERE id=?", (pid,)).fetchone()
+        if not row:
+            return None
+        keys = ("id", "mother", "father", "sex", "birth_tick", "birth_cell", "generation", "genes",
+                "death_tick", "death_cause", "death_age", "death_cell")
+        rec = dict(zip(keys, row))
+        rec["genes"] = json.loads(rec["genes"]) if rec["genes"] else None
+        return rec
+
+    def children_of(self, pid: int, until_tick: int) -> list[dict]:
+        rows = self.db.execute("SELECT id, sex, birth_tick, death_tick FROM people WHERE (mother=? OR father=?) "
+                               "AND birth_tick<=? ORDER BY birth_tick", (pid, pid, until_tick)).fetchall()
+        return [{"id": i, "sex": s, "birth_tick": b, "death_tick": d if d is not None and d <= until_tick else None}
+                for i, s, b, d in rows]
 
     def commit(self) -> None:
         if self._db is not None:

@@ -6,9 +6,14 @@ simple rules, instead of being scripted.
 
 > **North star:** define the rules of the universe, not the civilization that emerges from it.
 
-This is **Stage 1: The World** — a living landscape with continents, rivers,
-climate, seasons, wet and dry years, vegetation, grazing herds and predators.
-People arrive in Stage 2.
+**Stage 2: People** is here. On top of the living landscape from Stage 1
+(continents, rivers, climate, seasons, droughts, vegetation, grazing herds,
+predators) there are now individual early humans. They start as 60 people in
+one mild, green place beside fresh water, with nothing: no language, tools,
+fire, farming or leaders. They forage, hunt, drink, pair up, raise children,
+age and die. Every child inherits traits from both parents with small
+mutations, so the population **evolves** under whatever pressures the land
+puts on it.
 
 ---
 
@@ -58,7 +63,14 @@ is closed and after the VM reboots.
   Drawing happens on your PC's graphics card; the server only sends numbers.
 - **Show**: natural colours, vegetation, grazing herds, predators, temperature,
   this year's rain compared to normal, or biomes.
-- **Click** anywhere to inspect that spot.
+- **Click** anywhere to inspect that spot, including a list of the people
+  living there. Click a person to see their life: age, health, family (with
+  links to parents, partner and children, alive or dead), and inherited traits.
+  Press **Follow** to keep the camera on them as they travel.
+- **Show → People** shows population density; in the normal view people appear
+  as warm yellow dots (map) or small figures (3D).
+- The **People** and **Evolution** charts track population, births, deaths and
+  the average of each inherited trait over time.
 - **History** lists notable events (droughts, population collapses…).
   These labels are applied by an *observer*; the world itself has no idea it's
   "in a drought".
@@ -66,6 +78,38 @@ is closed and after the VM reboots.
   checkpoint and re-simulates forward — because the simulation is
   deterministic, the past comes back exactly as it was.
 - **Worlds**: create a new world from a seed, or switch between saved worlds.
+
+## About the people
+
+What a person *can* do, each day:
+
+- sense the land around them (food, which way water lies, warmth, other people)
+- walk one cell (~4 km)
+- gather plants and hunt grazing animals — which uses them up
+- drink at rivers and lakes, or from rain
+- pair with another single adult they meet (never close kin)
+- conceive, carry a child for 9 months, nurse it, feed it
+
+Children travel and eat with their mother; partners share food. That's
+biology, not a social system. Everything bigger — groups, migrations,
+famines, which lands get settled — comes out of those rules.
+
+**Inherited traits**, each with a real trade-off:
+
+| Trait | Helps | Costs |
+|---|---|---|
+| size | hunting, keeping warm | needs more food |
+| insulation | surviving cold | suffering in heat |
+| fertility | more children | faster ageing |
+| longevity | slower ageing | more food to maintain the body |
+| wanderlust | finding new land | more aimless movement |
+| sociability | staying near others | crowding |
+
+People don't have names: names need a language, and language hasn't been
+invented yet (Stage 4). They're known by number.
+
+Worlds created before Stage 2 have no people and keep running exactly as they
+did. To see people, create a **new world** from the Worlds button.
 
 ## Settings — the laws of physics
 
@@ -81,7 +125,8 @@ button). That keeps every world reproducible:
 One simulation tick is one day; a year is 360 days. The world keeps its own
 calendar, completely separate from your clock. Run `bench` to see real speed on
 your machine — for reference, the cloud machine this was built on did about
-**1 simulated year per second** at max speed, i.e. ~3,500 years per hour.
+**1 simulated year per second** at max speed with a thousand people, i.e.
+~3,000 years per hour.
 
 ## Storage
 
@@ -92,7 +137,8 @@ world.json       seed, version and the exact settings used
 static.npz       the landscape (saved once)
 checkpoints/     full snapshots: yearly for the last 100 years,
                  then once a decade, then once a century
-history.sqlite   the permanent record: statistics and events (never thinned)
+history.sqlite   the permanent record: statistics, events, and every person
+                 who ever lived (parents, birth, death, cause) — never thinned
 ```
 
 A snapshot is about 1 MB, so a 10,000-year world uses roughly 300 MB.
@@ -111,6 +157,7 @@ aworld/
   terrain.py   continents, mountains, lakes, rivers (runs once at birth)
   climate.py   temperature, rainfall, seasons, wet/dry years
   ecology.py   plants → grazers → predators, snow
+  people.py    individual humans: senses, movement, food, water, family, birth, death
   observer.py  measures the world and writes history (read-only)
   storage.py   checkpoints, thinning, storage cap, history database
   runner.py    keeps the world ticking in the background
@@ -127,7 +174,7 @@ Design rules the code follows:
 - **The observer never changes the world.** Words like "drought", "species" or
   later "village" and "chief" are labels for things we *detect*, not things the
   simulation is told to create.
-- **Plants and animals are population fields**, not individuals. People will be
+- **Plants and animals are population fields**, not individuals. People are
   individuals; the landscape doesn't need to be.
 - **One dependency** (NumPy). No database server, no message bus, no frameworks.
 
@@ -136,7 +183,7 @@ Design rules the code follows:
 | Stage | Adds | You'll see |
 |---|---|---|
 | **1. The World** ✅ | terrain, rivers, climate, seasons, plants & animals, save/rewind, 3D viewer | a living landscape |
-| 2. People | needs, foraging, aging, births, families, death, inherited traits | bands surviving or starving |
+| **2. People** ✅ | needs, foraging, aging, births, families, death, inherited traits | bands surviving or starving |
 | 3. Learning | skills, imitation, material "chemistry", tools, knowledge that can be lost | discoveries spreading and dying out |
 | 4. Language | invented words, shared vocabularies, dialects | groups that drift apart in speech |
 | 5. Society | sharing, reputation, conflict, group identity | bands forming, splitting, allying |

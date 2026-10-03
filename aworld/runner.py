@@ -7,6 +7,7 @@ halfway through a day.
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -14,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import load_config
+from . import people as ppl
 from .ecology import BIOMES
 from .observer import GRAZERS_PER_UNIT, PREDATORS_PER_UNIT, Observer
 from .storage import WorldStore, list_worlds
@@ -62,6 +64,11 @@ class Runner:
         observer = Observer()
         store = WorldStore.create(self.worlds_dir, world, name)
         store.record(0, {}, observer.opening_events(world))
+        if world.has_people:
+            p = world.state["people"]
+            store.record_people(0, [], [], founders=[
+                (int(p["id"][i]), int(p["mother"][i]), int(p["father"][i]), int(p["sex"][i]), int(p["birth"][i]),
+                 int(p["pos"][i]), 0, json.dumps(p["genes"][i].round(4).tolist())) for i in range(p["id"].size)])
         store.write_checkpoint(world, observer.memory)
         store.commit()
         self._swap(world, store, observer)
@@ -138,6 +145,9 @@ class Runner:
         metrics, events = self.observer.after_step(world, flows, cfg["metrics_every_days"])
         if metrics or events:
             store.record(world.tick, metrics, events)
+        today = flows.get("people")
+        if today and (today["births"] or today["deaths"]):
+            store.record_people(world.tick - 1, today["births"], today["deaths"])
         if world.tick % cfg["checkpoint_every_days"] == 0:
             store.write_checkpoint(world, self.observer.memory)
             store.thin_checkpoints(world.tick, world.dpy, int(cfg["max_storage_gb"] * 1024 ** 3))
@@ -192,6 +202,7 @@ class Runner:
                 "pause_on_major": self.pause_on_major,
                 "days_per_sec": round(self.measured_days_per_sec, 1),
                 "last_major": self.last_major,
+                "people": self._people_summary(),
                 "now": {
                     "grazers": round(float(st["grazers"].sum()) * GRAZERS_PER_UNIT),
                     "predators": round(float(st["predators"].sum()) * PREDATORS_PER_UNIT),
@@ -228,8 +239,95 @@ class Runner:
                 q(st["snow"], 0, 40.0),
                 np.clip((w.temperature_map() + 40) / 85 * 255, 0, 255),
                 q(st["anomaly"], -0.5, 0.5),
+                self._people_layer(),
             ]
             return b"".join(np.round(l).astype(np.uint8).tobytes() for l in layers)
+
+    def _people_layer(self) -> np.ndarray:
+        w = self.world
+        out = np.zeros(w.shape[0] * w.shape[1])
+        if w.has_people and w.state["people"]["id"].size:
+            counts = np.bincount(w.state["people"]["pos"], minlength=w.static["cells"].size)
+            out[w.static["cells"]] = np.minimum(counts, 255)
+        return out.reshape(w.shape)
+
+    def _people_summary(self) -> dict | None:
+        w = self.world
+        if not w.has_people:
+            return None
+        p = w.state["people"]
+        counts = self.observer.memory.get("year_counts", {})
+        return {"population": int(p["id"].size),
+                "births_this_year": int(counts.get("births", 0)),
+                "deaths_this_year": int(sum(counts.get("deaths", []))),
+                "ever_born": int(p["next_id"] - 1)}
+
+    def people_at(self, x: int, y: int) -> list[dict]:
+        with self.lock:
+            w = self.world
+            if not w.has_people:
+                return []
+            H, W = w.shape
+            c = int(w.static["compact_of"][int(np.clip(y, 0, H - 1)) * W + int(np.clip(x, 0, W - 1))])
+            p = w.state["people"]
+            rows = np.flatnonzero(p["pos"] == c) if c >= 0 else []
+            return [self._person_brief(int(i)) for i in rows]
+
+    def _person_brief(self, i: int) -> dict:
+        p, w = self.world.state["people"], self.world
+        return {"id": int(p["id"][i]), "sex": "female" if p["sex"][i] == ppl.FEMALE else "male",
+                "age": round((w.tick - int(p["birth"][i])) / w.dpy, 1), "health": round(float(p["health"][i]), 2)}
+
+    def person(self, pid: int) -> dict:
+        """Everything known about one person, living or dead."""
+        with self.lock:
+            w, p = self.world, self.world.state.get("people")
+            if p is None:
+                return {"error": "this world has no people"}
+            H, W = w.shape
+            rows = ppl.index_of(p["id"], np.array([pid]))
+            rec = self.store.person_record(pid)
+
+            def status_of(other):
+                if other is None or other < 0:
+                    return None
+                alive = ppl.index_of(p["id"], np.array([other]))[0] >= 0
+                return {"id": int(other), "alive": bool(alive)}
+
+            def xy(compact):
+                full = int(w.static["cells"][compact])
+                return {"x": full % W, "y": full // W}
+
+            if rows[0] >= 0:
+                i = int(rows[0])
+                age = (w.tick - int(p["birth"][i])) / w.dpy
+                head = ppl.households(p, (w.tick - p["birth"]) / w.dpy)
+                info = {
+                    **self._person_brief(i), "alive": True, "generation": int(p["gen"][i]),
+                    "energy": round(float(p["energy"][i]), 2), "hydration": round(float(p["hydration"][i]), 2),
+                    "pregnant": bool(p["pregnant_until"][i] > w.tick),
+                    "mother": status_of(int(p["mother"][i])), "father": status_of(int(p["father"][i])),
+                    "partner": status_of(int(p["partner"][i])),
+                    "household_size": int((head == head[i]).sum()),
+                    "location": xy(int(p["pos"][i])),
+                    "born_year": int(p["birth"][i]) // w.dpy,
+                    "traits": {g: round(float(p["genes"][i, k]), 3) for k, g in enumerate(ppl.GENES)},
+                }
+                info["age"] = round(age, 1)
+            elif rec and rec["birth_tick"] <= w.tick:
+                info = {"id": pid, "alive": False, "sex": "female" if rec["sex"] == ppl.FEMALE else "male",
+                        "generation": rec["generation"], "born_year": rec["birth_tick"] // w.dpy,
+                        "died_year": rec["death_tick"] // w.dpy if rec["death_tick"] is not None else None,
+                        "cause_of_death": rec["death_cause"], "age_at_death": rec["death_age"],
+                        "mother": status_of(rec["mother"]), "father": status_of(rec["father"]),
+                        "location": xy(rec["death_cell"]) if rec["death_cell"] is not None else None,
+                        "traits": dict(zip(ppl.GENES, rec["genes"])) if rec["genes"] else None}
+            else:
+                return {"error": f"no person #{pid} (yet)"}
+            info["children"] = [{"id": c["id"], "sex": "female" if c["sex"] == ppl.FEMALE else "male",
+                                 "alive": bool(ppl.index_of(p["id"], np.array([c["id"]]))[0] >= 0)}
+                                for c in self.store.children_of(pid, w.tick)]
+            return info
 
     def cell(self, x: int, y: int) -> dict:
         with self.lock:

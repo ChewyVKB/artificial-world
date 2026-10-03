@@ -98,3 +98,18 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
   .viewport { min-height: 55vh; }
   .panel { width: 100%; border-left: 0; border-top: 1px solid var(--line); }
 }
+
+.stat.wide { grid-column: span 2; }
+.stat .sub { display: block; font: 11px var(--mono); color: var(--muted); }
+.card h4 { margin: 12px 0 6px; font-size: 12px; color: var(--muted); font-weight: 500; }
+.card a { color: #ffc46b; text-decoration: none; font-family: var(--mono); }
+.card a:hover { text-decoration: underline; }
+.plist { list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; }
+.plist li { display: grid; grid-template-columns: 70px 1fr 70px; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
+.meter { display: inline-block; width: 64px; height: 6px; border-radius: 3px; background: #242a2e; vertical-align: middle; overflow: hidden; }
+.meter span { display: block; height: 100%; background: var(--accent); }
+.person-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.person-head .pid { font: 500 18px var(--mono); color: #ffc46b; }
+.person-head .spacer { flex: 1; }
+.person-head button.on { border-color: #ffc46b; color: #ffc46b; }
+.kids { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 13px; }

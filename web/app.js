@@ -30,13 +30,16 @@ const RAMPS = {
   predators: [[0, .16, .17, .16], [.4, .55, .25, .18], [1, 1.0, .45, .35]],
   temp: [[0, .18, .30, .75], [.47, .90, .93, .95], [.7, .95, .75, .35], [1, .80, .18, .14]],
   rain: [[0, .62, .38, .18], [.5, .90, .90, .86], [1, .18, .42, .80]],
+  people: [[0, .14, .15, .15], [.02, .45, .30, .55], [.3, .95, .55, .35], [1, 1.0, .95, .75]],
 };
+const PERSON = [1.0, 0.82, 0.45];         // how people show up on the map
 const LEGENDS = {
   plants: ["Vegetation", "bare", "lush"],
   grazers: ["Grazing herds (density)", "none", "dense"],
   predators: ["Predators (density)", "none", "dense"],
   temp: ["Temperature today", "−40 °C", "+45 °C"],
   rain: ["Rain this year vs. normal", "−50%", "+50%"],
+  people: ["People per cell (~16 km²)", "0", "20+"],
 };
 
 function ramp(name, t, out) {
@@ -96,12 +99,12 @@ async function loadFrame() {
   const r = await fetch("/api/frame");
   const tick = +r.headers.get("X-Tick");
   const buf = await r.arrayBuffer();
-  if (buf.byteLength !== S.N * 6) return;          // world switched mid-flight
+  if (buf.byteLength !== S.N * 7) return;          // world switched mid-flight
   S.frame = new Uint8Array(buf);
   S.tick = tick;
   paint();
 }
-const L = (k) => S.frame.subarray(k * S.N, (k + 1) * S.N);   // 0 plants 1 grazers 2 predators 3 snow 4 temp 5 rain
+const L = (k) => S.frame.subarray(k * S.N, (k + 1) * S.N);   // 0 plants 1 grazers 2 predators 3 snow 4 temp 5 rain 6 people
 
 // ── colouring (shared by 3D and 2D) ───────────────────────────
 function cellColor(i, out) {
@@ -125,8 +128,9 @@ function cellColor(i, out) {
       if (snow > 0) mix(out, SNOW, Math.min(1, snow * 2.5), out);
     }
   } else {
-    const k = { plants: 0, grazers: 1, predators: 2, temp: 4, rain: 5 }[layer];
-    ramp(layer, f[k * S.N + i] / 255, out);
+    const k = { plants: 0, grazers: 1, predators: 2, temp: 4, rain: 5, people: 6 }[layer];
+    const v = layer === "people" ? Math.min(1, Math.sqrt(f[k * S.N + i] / 20)) : f[k * S.N + i] / 255;
+    ramp(layer, v, out);
   }
   if (S.water[i] === 1 && (layer === "natural" || layer === "biome")) mix(out, RIVER, 0.85, out);
   return out;
@@ -209,6 +213,37 @@ function build3D() {
   paint();
 }
 
+// People in 3D: one little standing figure per occupied cell, taller where more people live.
+function updatePeople3D() {
+  if (!three.scene || !S.frame) return;
+  const counts = S.frame.subarray(6 * S.N, 7 * S.N);
+  let n = 0;
+  for (let i = 0; i < S.N; i++) if (counts[i]) n++;
+  if (!three.people || three.peopleCap < n) {
+    if (three.people) { three.scene.remove(three.people); three.people.dispose(); }
+    const cap = Math.max(256, n * 2);
+    const geo = new THREE.CylinderGeometry(0.28, 0.38, 1, 6).translate(0, 0.5, 0);
+    const mat = new THREE.MeshLambertMaterial({ color: 0xffc46b, emissive: 0x4a2a00 });
+    three.people = new THREE.InstancedMesh(geo, mat, cap);
+    three.people.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    three.peopleCap = cap;
+    three.scene.add(three.people);
+  }
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
+  let k = 0;
+  for (let i = 0; i < S.N; i++) {
+    const c = counts[i];
+    if (!c) continue;
+    const x = i % S.W, y = (i / S.W) | 0;
+    p.set(x - (S.W - 1) / 2, heightAt(i), y - (S.H - 1) / 2);
+    sc.set(1, 0.8 + Math.log2(1 + c) * 0.9, 1);
+    three.people.setMatrixAt(k++, m.compose(p, q, sc));
+  }
+  three.people.count = k;
+  three.people.instanceMatrix.needsUpdate = true;
+  three.people.visible = S.layer !== "people";
+}
+
 function resize() {
   const el = $("viewport");
   const w = el.clientWidth, h = el.clientHeight;
@@ -253,12 +288,15 @@ function paint() {
       c[3 * i] = tmp[0] ** 2.2; c[3 * i + 1] = tmp[1] ** 2.2; c[3 * i + 2] = tmp[2] ** 2.2;
     }
     three.mesh.geometry.attributes.color.needsUpdate = true;
+    updatePeople3D();
     render();
   } else if (S.view === "2d" && flat.img) {
     const d = flat.img.data;
     const shadeOn = S.layer === "natural" || S.layer === "biome";
+    const ppl = S.frame && S.layer !== "people" ? S.frame.subarray(6 * S.N, 7 * S.N) : null;
     for (let i = 0; i < S.N; i++) {
       cellColor(i, tmp);
+      if (ppl && ppl[i]) mix(tmp, PERSON, Math.min(1, 0.85 + ppl[i] / 40), tmp);
       const s = shadeOn ? S.shade[i] : 1;
       d[4 * i] = Math.min(255, tmp[0] * s * 255); d[4 * i + 1] = Math.min(255, tmp[1] * s * 255);
       d[4 * i + 2] = Math.min(255, tmp[2] * s * 255); d[4 * i + 3] = 255;
@@ -289,18 +327,43 @@ function drawLegend() {
 }
 
 // ── inspector ─────────────────────────────────────────────────
-async function inspect(x, y) {
+function placeMarker(x, y) {
   S.selected = [x, y];
   if (three.marker) {
     three.marker.position.set(x - (S.W - 1) / 2, heightAt(y * S.W + x) + 2.5, y - (S.H - 1) / 2);
     three.marker.visible = true;
   }
+}
+async function inspect(x, y) {
+  S.personId = null; S.follow = false;
+  placeMarker(x, y);
   paint();
   await refreshInspector();
 }
+async function showPerson(id) {
+  S.personId = id;
+  await refreshInspector();
+}
+// Clicks inside the inspector (people lists, family links, buttons).
+$("inspector").addEventListener("click", async (e) => {
+  const t = e.target.closest("[data-person],[data-action]");
+  if (!t) return;
+  if (t.dataset.person) return showPerson(+t.dataset.person);
+  if (t.dataset.action === "back") { S.personId = null; S.follow = false; return refreshInspector(); }
+  if (t.dataset.action === "follow") { S.follow = !S.follow; return refreshInspector(); }
+});
+
+const kv = (rows) => `<dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
+const link = (r, label) => r ? `<a href="#" data-person="${r.id}">${label ?? "#" + r.id}</a>${r.alive ? "" : ' <span class="muted">†</span>'}` : "—";
+const bar = (v) => `<span class="meter"><span style="width:${Math.round(v * 100)}%"></span></span>`;
+
 async function refreshInspector() {
+  if (S.personId) return renderPerson(await api(`/api/person?id=${S.personId}`));
   if (!S.selected) return;
-  const c = await api(`/api/cell?x=${S.selected[0]}&y=${S.selected[1]}`);
+  const [c, here] = await Promise.all([
+    api(`/api/cell?x=${S.selected[0]}&y=${S.selected[1]}`),
+    api(`/api/people?x=${S.selected[0]}&y=${S.selected[1]}`),
+  ]);
   const rows = [
     ["Place", `${c.x}, ${c.y}`], ["Biome", c.biome],
     ["Elevation", c.elevation_m >= 0 ? `${c.elevation_m} m` : `${-c.elevation_m} m deep`],
@@ -314,7 +377,61 @@ async function refreshInspector() {
     ["Vegetation", `${c.vegetation_pct}% (max ${c.vegetation_capacity_pct}%)`],
     ["Grazing animals", `≈ ${c.grazers}`], ["Predators", `≈ ${c.predators}`],
     ["Snow", `${c.snow_cm} cm`], ["Rain this year", `${c.rain_this_year_vs_normal_pct >= 0 ? "+" : ""}${c.rain_this_year_vs_normal_pct}% vs normal`]);
-  $("inspectBody").outerHTML = `<dl class="kv" id="inspectBody">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
+  let people = "";
+  if (here.length) {
+    const shown = here.slice(0, 40);
+    people = `<h4>${here.length} ${here.length === 1 ? "person" : "people"} here</h4><ul class="plist">${shown.map((p) =>
+      `<li><a href="#" data-person="${p.id}">#${p.id}</a><span>${p.sex === "female" ? "♀" : "♂"} ${p.age} yrs</span>${bar(p.health)}</li>`).join("")}</ul>` +
+      (here.length > shown.length ? `<div class="muted small">…and ${here.length - shown.length} more</div>` : "");
+  }
+  $("inspectBody").innerHTML = kv(rows) + people;
+}
+
+function renderPerson(p) {
+  if (p.error) { $("inspectBody").innerHTML = `<div class="muted">${escapeHtml(p.error)}</div><button data-action="back">Back</button>`; return; }
+  if (S.follow && p.alive && p.location) {
+    placeMarker(p.location.x, p.location.y);
+    followCamera(p.location.x, p.location.y);
+  }
+  const rows = [
+    ["Sex", p.sex], ["Generation", p.generation],
+    ["Born", `year ${p.born_year}`],
+  ];
+  if (p.alive) {
+    rows.push(["Age", `${p.age} years`], ["Health", bar(p.health)], ["Fed", bar(p.energy)], ["Water", bar(p.hydration)]);
+    if (p.pregnant) rows.push(["", "expecting a child"]);
+    rows.push(["Travels with", `${p.household_size} ${p.household_size === 1 ? "person" : "people"}`],
+              ["Where", `${p.location.x}, ${p.location.y}`]);
+  } else {
+    rows.push(["Died", `year ${p.died_year}, aged ${p.age_at_death}`], ["Cause", p.cause_of_death || "—"]);
+  }
+  rows.push(["Mother", link(p.mother)], ["Father", link(p.father)]);
+  if (p.alive) rows.push(["Partner", link(p.partner)]);
+  const kids = p.children.length
+    ? p.children.map((c) => link(c, `#${c.id}${c.sex === "female" ? "♀" : "♂"}`)).join(" ")
+    : "none";
+  const traits = p.traits ? Object.entries(p.traits).map(([k, v]) =>
+    [k, `${bar(k === "size" ? (v - 0.6) / 0.8 : v)} ${v.toFixed(2)}`]) : [];
+  $("inspectBody").innerHTML = `
+    <div class="person-head">
+      <span class="pid">#${p.id}</span>${p.alive ? "" : '<span class="muted"> · died</span>'}
+      <span class="spacer"></span>
+      ${p.alive ? `<button data-action="follow" class="${S.follow ? "on" : ""}">${S.follow ? "Following" : "Follow"}</button>` : ""}
+      <button data-action="back">Back</button>
+    </div>
+    ${kv(rows)}
+    <h4>Children (${p.children.length})</h4><div class="kids">${kids}</div>
+    ${traits.length ? `<h4>Inherited traits</h4>${kv(traits)}` : ""}
+    <p class="muted small">People have no names yet — names need a language, and language hasn't been invented.</p>`;
+}
+
+function followCamera(x, y) {
+  if (!THREE || S.view !== "3d") return;
+  const target = new THREE.Vector3(x - (S.W - 1) / 2, heightAt(y * S.W + x), y - (S.H - 1) / 2);
+  const delta = target.sub(three.controls.target);
+  three.controls.target.add(delta);
+  three.camera.position.add(delta);
+  three.controls.update();
 }
 
 // ── charts ────────────────────────────────────────────────────
@@ -348,11 +465,13 @@ function lineChart(canvas, series, dpy, opts = {}) {
     s.data.forEach(([t, v], k) => (k ? g.lineTo(X(t), Y(v)) : g.moveTo(X(t), Y(v))));
     g.stroke();
   }
-  let lx = pad.l + 4;
+  let lx = pad.l + 4, ly = pad.t + 2;
   for (const s of series) {
-    g.fillStyle = s.color; g.fillRect(lx, pad.t + 2, 8, 8);
-    g.fillStyle = "#e4e7e5"; g.fillText(s.label, lx + 11, pad.t + 9);
-    lx += g.measureText(s.label).width + 24;
+    const wdt = g.measureText(s.label).width + 24;
+    if (lx + wdt > w - pad.r && lx > pad.l + 4) { lx = pad.l + 4; ly += 12; }
+    g.fillStyle = s.color; g.fillRect(lx, ly, 8, 8);
+    g.fillStyle = "#e4e7e5"; g.fillText(s.label, lx + 11, ly + 7);
+    lx += wdt;
   }
 }
 function fmt(v) {
@@ -361,9 +480,24 @@ function fmt(v) {
   return v >= 10 ? Math.round(v) + "" : v.toFixed(1);
 }
 
+const TRAIT_COLORS = { size: "#e4e7e5", insulation: "#6fb3e0", fertility: "#e07a9f", longevity: "#b39ddb", wanderlust: "#e2b65c", sociability: "#7bc96f" };
 async function refreshCharts() {
-  const m = await api("/api/metrics?names=grazers,predators,vegetation_pct,drought_area_pct&points=400");
+  const traitNames = Object.keys(TRAIT_COLORS).map((t) => "trait_" + t).join(",");
+  const m = await api(`/api/metrics?names=grazers,predators,vegetation_pct,drought_area_pct,population,births_per_year,deaths_per_year,${traitNames}&points=400`);
   const s = m.series, css = getComputedStyle(document.documentElement);
+  const hasPeople = (s.population || []).length > 0;
+  $("peopleCharts").hidden = !hasPeople;
+  if (hasPeople) {
+    lineChart($("chartPeople"), [
+      { label: "population", color: "#ffc46b", data: s.population || [] },
+      { label: "births/yr", color: "#7bc96f", data: s.births_per_year || [] },
+      { label: "deaths/yr", color: "#e07a5f", data: s.deaths_per_year || [] },
+    ], m.days_per_year);
+    lineChart($("chartTraits"), Object.entries(TRAIT_COLORS).map(([t, color]) => ({
+      label: t === "size" ? "size*" : t, color,
+      data: (s["trait_" + t] || []).map(([k, v]) => [k, t === "size" ? (v - 0.6) / 0.8 : v]),
+    })), m.days_per_year, { ymax: 1 });
+  }
   lineChart($("chartPop"), [
     { label: "grazers", color: css.getPropertyValue("--grazer"), data: s.grazers || [] },
     { label: "predators ×10", color: css.getPropertyValue("--predator"), data: (s.predators || []).map(([t, v]) => [t, v * 10]) },
@@ -376,7 +510,7 @@ async function refreshCharts() {
 
 async function refreshHistory() {
   const ev = await api("/api/events?limit=120");
-  $("history").innerHTML = ev.map((e) => `<li class="${/COLLAPSE|EXTINCT|DROUGHT_BEGAN|CREATED/.test(e.type) ? "major" : ""}">${escapeHtml(e.title)}</li>`).join("")
+  $("history").innerHTML = ev.map((e) => `<li class="${/EXTINCT|FAMINE|PEOPLE|NEW_LAND|FIRST_BIRTH|GROUPS|CREATED|POPULATION/.test(e.type) ? "major" : ""}">${escapeHtml(e.title)}</li>`).join("")
     || `<li class="muted">Nothing notable yet.</li>`;
 }
 const escapeHtml = (t) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -397,7 +531,8 @@ function applyStatus(st) {
   if (!sel.options.length) for (const s of st.speeds) sel.add(new Option(s, s));
   if (document.activeElement !== sel) sel.value = st.speed;
   $("sGrazers").textContent = fmt(st.now.grazers);
-  $("sPredators").textContent = fmt(st.now.predators);
+  $("sPeople").textContent = st.people ? st.people.population.toLocaleString() : "none";
+  $("sPeopleSub").textContent = st.people ? `${st.people.births_this_year} born · ${st.people.deaths_this_year} died this year` : "";
   $("sVeg").textContent = `${st.now.vegetation_pct}%`;
   $("sSpeed").textContent = st.running ? `${fmt(st.days_per_sec)} d/s` : "paused";
   $("pauseMajor").checked = st.pause_on_major;

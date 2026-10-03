@@ -52,6 +52,7 @@
         <option value="predators">Predators</option>
         <option value="temp">Temperature</option>
         <option value="rain">Rain vs. normal</option>
+        <option value="people">People</option>
         <option value="biome">Biomes</option>
       </select>
     </label>
@@ -74,11 +75,28 @@
 
   <aside class="panel">
     <section class="card stats">
+      <div class="stat wide"><span class="k">People</span><span class="v" id="sPeople">—</span><span class="sub" id="sPeopleSub"></span></div>
       <div class="stat"><span class="k">Grazing animals</span><span class="v" id="sGrazers">—</span></div>
-      <div class="stat"><span class="k">Predators</span><span class="v" id="sPredators">—</span></div>
       <div class="stat"><span class="k">Vegetation</span><span class="v" id="sVeg">—</span></div>
       <div class="stat"><span class="k">Sim speed</span><span class="v" id="sSpeed">—</span></div>
     </section>
+
+    <section class="card" id="inspector">
+      <h3>Inspector</h3>
+      <div id="inspectBody"><div class="muted">Click anywhere on the land — or on a cluster of people.</div></div>
+    </section>
+
+    <div id="peopleCharts" hidden>
+      <section class="card">
+        <h3>People</h3>
+        <canvas class="chart" id="chartPeople" height="130"></canvas>
+      </section>
+      <section class="card">
+        <h3>Evolution <small>average inherited traits</small></h3>
+        <canvas class="chart" id="chartTraits" height="140"></canvas>
+        <div class="muted small">*size shown on a 0–1 scale (0.6× to 1.4× the founders' build)</div>
+      </section>
+    </div>
 
     <section class="card">
       <h3>Populations <small>animals</small></h3>
@@ -89,10 +107,6 @@
       <canvas class="chart" id="chartClimate" height="110"></canvas>
     </section>
 
-    <section class="card" id="inspector">
-      <h3>Inspector</h3>
-      <div class="muted" id="inspectBody">Click anywhere on the land.</div>
-    </section>
 
     <section class="card">
       <h3>History</h3>

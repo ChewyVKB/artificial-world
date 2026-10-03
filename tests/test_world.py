@@ -167,10 +167,20 @@ class TestRunnerAndServer(unittest.TestCase):
 
             self.assertEqual(json.loads(get("/api/status"))["world"]["width"], 64)
             self.assertEqual(len(get("/api/terrain")), 64 * 64 * 4)
-            self.assertEqual(len(get("/api/frame")), 64 * 64 * 6)
+            self.assertEqual(len(get("/api/frame")), 64 * 64 * 7)
             self.assertEqual(post("/api/control", {"action": "step", "days": 30})["tick"], 30)
             self.assertIn("biome", json.loads(get("/api/cell?x=32&y=32")))
             self.assertIn(b"<html", get("/").lower())
+            post("/api/control", {"action": "step", "days": 400})
+            st = json.loads(get("/api/status"))
+            self.assertGreater(st["people"]["population"], 0)
+            pid = int(self.runner.world.state["people"]["id"][0])
+            person = json.loads(get(f"/api/person?id={pid}"))
+            self.assertTrue(person["alive"])
+            loc = person["location"]
+            self.assertTrue(any(x["id"] == pid for x in json.loads(get(f"/api/people?x={loc['x']}&y={loc['y']}"))))
+            mother = json.loads(get(f"/api/person?id=1"))          # a founder, alive or dead
+            self.assertNotIn("error", mother)
         finally:
             httpd.shutdown()
             httpd.server_close()
