@@ -1,10 +1,11 @@
 // Artificial World — viewer.
 // The server only sends numbers; all drawing happens here, on your PC's GPU.
 // three.js (3D library) loads from a CDN. If it can't (offline?), we fall back to the flat map.
-let THREE = null, OrbitControls = null;
+let THREE = null, OrbitControls = null, CloseUpMod = null;
 try {
   THREE = await import("three");
   ({ OrbitControls } = await import("three/addons/controls/OrbitControls.js"));
+  CloseUpMod = await import("./closeup.js");
 } catch (err) {
   console.warn("3D unavailable, using the flat map:", err);
 }
@@ -388,6 +389,8 @@ $("inspector").addEventListener("click", async (e) => {
   if (t.dataset.person) return showPerson(+t.dataset.person);
   if (t.dataset.action === "back") { S.personId = null; S.follow = false; return refreshInspector(); }
   if (t.dataset.action === "follow") { S.follow = !S.follow; return refreshInspector(); }
+  if (t.dataset.action === "closeup") return enterCloseUp({ x: S.selected[0], y: S.selected[1] });
+  if (t.dataset.action === "closeup-person") return enterCloseUp({ person: S.personId });
 });
 
 const kv = (rows) => `<dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
@@ -421,7 +424,9 @@ async function refreshInspector() {
       `<li><a href="#" data-person="${p.id}">${p.name ? escapeHtml(p.name) : "#" + p.id}</a><span>${p.sex === "female" ? "♀" : "♂"} ${p.age} yrs</span>${bar(p.health)}</li>`).join("")}</ul>` +
       (here.length > shown.length ? `<div class="muted small">…and ${here.length - shown.length} more</div>` : "");
   }
-  $("inspectBody").innerHTML = kv(rows) + people;
+  const watch = CloseUpMod && c.vegetation_pct !== undefined && c.biome !== "Ocean"
+    ? `<button class="watch-btn primary" data-action="closeup">👁 Watch this place up close</button>` : "";
+  $("inspectBody").innerHTML = kv(rows) + watch + people;
 }
 
 function renderPerson(p) {
@@ -458,6 +463,7 @@ function renderPerson(p) {
       ${p.alive ? `<button data-action="follow" class="${S.follow ? "on" : ""}">${S.follow ? "Following" : "Follow"}</button>` : ""}
       <button data-action="back">Back</button>
     </div>
+    ${p.alive && CloseUpMod ? `<button class="watch-btn primary" data-action="closeup-person">👁 Watch ${p.name ? escapeHtml(p.name) : "them"} up close</button>` : ""}
     ${kv(rows)}
     <h4>Children (${p.children.length})</h4><div class="kids">${kids}</div>
     ${p.knows ? `<h4>Knows how to make (${p.knows.length})</h4>${p.knows.length ? kv(p.knows.map((k) => [k.name, bar(k.skill)])) : '<div class="muted small">nothing yet</div>'}` : ""}
@@ -601,6 +607,7 @@ function applyStatus(st) {
   $("errorBanner").textContent = st.error ? `${st.error} — check the log with: docker compose logs` : "";
   const sto = st.storage;
   $("storage").textContent = `Disk: ${(sto.world_bytes / 1e6).toFixed(1)} MB of ${(sto.cap_bytes / 1e9).toFixed(0)} GB cap · ${sto.checkpoints} checkpoints`;
+  if (cu.on) cuStatus(st);
   if (st.last_major && st.last_major.tick !== S.lastMajorTick) {
     if (S.lastMajorTick !== -1) toast(st.last_major.title);
     S.lastMajorTick = st.last_major.tick;
@@ -721,6 +728,112 @@ $("btnCreate").onclick = async (e) => {
     await loadTerrain(); await Promise.all([loadFrame(), refreshCharts(), refreshHistory()]);
   } finally { $("btnCreate").disabled = false; }
 };
+
+// ── close-up mode ─────────────────────────────────────────────
+// Zoom down to one small patch of land and watch the people there live
+// through the day the simulation just decided for them. Display only:
+// nothing seen here changes the world's history.
+const cu = { on: false, view: null, prevSpeed: null, tick: -1, base: 7, t0: 0, running: false, loading: false, whoHtml: "" };
+const WATCH_SPEED = "1 day/2 min";
+const cuHour = () => {
+  const daySec = (S.status && S.status.day_seconds) || 120;
+  const h = cu.base + (cu.running ? (performance.now() - cu.t0) / 1000 / daySec * 24 : 0);
+  return Math.min(23.99, Math.max(0, h));
+};
+const rebase = (h) => { cu.base = h; cu.t0 = performance.now(); };
+
+async function enterCloseUp(where) {
+  if (!CloseUpMod) return;
+  if (!cu.view) {
+    cu.view = new CloseUpMod.CloseUp($("viewC"), $("cuOverlay"), api);
+    window._closeup = cu.view;                 // handy for poking at it from the browser console
+    cu.view.onSelect = () => { cu.whoHtml = ""; };
+  }
+  cu.on = true; cu.prevView = S.view; cu.prevSpeed = null;
+  for (const id of ["view3", "view2", "legend"]) $(id).hidden = true;
+  for (const id of ["viewC", "cuOverlay", "cuHud", "cuWho"]) $(id).hidden = false;
+  document.querySelector(".hint").textContent = "Click a person to follow them · drag to look around · scroll to zoom · Esc to go back";
+  const sp = S.status.speeds;
+  if (sp.indexOf(S.status.speed) > sp.indexOf("1 day/min")) {           // faster than a day a minute: slow down to watch
+    cu.prevSpeed = S.status.speed;
+    await control({ action: "speed", speed: WATCH_SPEED });
+  }
+  cu.tick = S.status.tick; cu.running = S.running;
+  rebase(S.running ? 0 : +$("cuHour").value);
+  try {
+    toast("Walking down to the camps…");
+    await cu.view.open(where);
+    cu.view.resize();
+  } catch (err) {
+    console.warn(err); toast("Couldn't open the close-up view."); return exitCloseUp();
+  }
+  requestAnimationFrame(cuFrame);
+}
+
+async function exitCloseUp() {
+  if (!cu.on) return;
+  cu.on = false;
+  if (cu.view) cu.view.close();
+  for (const id of ["viewC", "cuOverlay", "cuHud", "cuWho"]) $(id).hidden = true;
+  $("legend").hidden = false;
+  S.view = cu.prevView || "3d";
+  $(S.view === "3d" ? "view3d" : "view2d").click();
+  if (cu.prevSpeed) await control({ action: "speed", speed: cu.prevSpeed });
+  const p = cu.view && cu.view.selected;
+  if (p) showPerson(p);
+}
+
+function cuStatus(st) {
+  if (st.running !== cu.running) { rebase(cuHour()); cu.running = st.running; }
+  if (st.tick !== cu.tick && !cu.loading) {          // a new day has been lived: show it from the start
+    cu.tick = st.tick; cu.loading = true;
+    cu.view.refresh().then(() => { rebase(0); cu.whoHtml = ""; }).catch(console.warn).finally(() => (cu.loading = false));
+  }
+}
+
+const hhmm = (h) => `${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor((h % 1) * 60)).padStart(2, "0")}`;
+let lastWho = 0;
+function cuFrame() {
+  if (!cu.on) return;
+  requestAnimationFrame(cuFrame);
+  const h = cuHour();
+  cu.view.setHour(h);
+  cu.view.follow = $("cuFollow").checked;
+  const slider = $("cuHour");
+  if (document.activeElement !== slider) slider.value = h;
+  const sky = h < 5 || h >= 21 ? "night" : h < 7 ? "dawn" : h < 18 ? "day" : "evening";
+  $("cuClock").textContent = `${hhmm(h)} · ${sky}`;
+  const now = performance.now();
+  if (now - lastWho > 300) { lastWho = now; renderWho(h); }
+}
+$("cuHour").addEventListener("input", (e) => rebase(+e.target.value));
+$("cuBack").onclick = exitCloseUp;
+window.addEventListener("keydown", (e) => { if (e.code === "Escape" && cu.on) exitCloseUp(); });
+$("view3").addEventListener("dblclick", () => { if (S.selected) enterCloseUp({ x: S.selected[0], y: S.selected[1] }); });
+
+function renderWho(h = cuHour()) {
+  const v = cu.view, el = $("cuWho");
+  const body = v && v.selected && v.people.get(v.selected);
+  if (!body) { el.innerHTML = `<div class="muted">No one lives here right now. Find people on the map and try again.</div>`; return; }
+  const p = body.userData.data, seg = v.activityOf(p.id);
+  let doing = CloseUpMod.DOING[seg.act] || seg.act;
+  if (seg.act === "make" && seg.item) doing = `making a ${seg.item.replaceAll("_", " ")}`;
+  const log = [
+    ...p.thoughts.map((t) => ({ t: t.t, html: `<i>${escapeHtml(t.text)}</i>` })),
+    ...p.speech.map((s) => ({ t: s.t, said: true, html: `says <b>«${escapeHtml(s.word)}»</b> <span class="muted">(${escapeHtml(s.gloss)})</span>` })),
+  ].filter((x) => x.t <= h).sort((a, b) => a.t - b.t).slice(-12);
+  const html = `<div class="nm">${p.name ? escapeHtml(p.name) : "#" + p.id} <span class="muted small">${p.sex === "female" ? "♀" : "♂"} ${Math.floor(p.age)} yrs</span>
+      <a href="#" class="small" data-open-person="${p.id}" style="float:right">details</a></div>
+    <div class="doing">${escapeHtml(doing)}</div>
+    ${kv([["Health", bar(p.health)], ["Fed", bar(p.energy)], ["Water", bar(p.hydration)]])}
+    ${p.carrying.length ? `<div class="small muted">Carrying ${p.carrying.map((c) => escapeHtml(c.replaceAll("_", " "))).join(", ")}</div>` : ""}
+    <ol>${log.map((x) => `<li class="${x.said ? "said" : ""}"><b>${hhmm(x.t)}</b>${x.html}</li>`).join("") || '<li class="muted">…</li>'}</ol>`;
+  if (html !== cu.whoHtml) { el.innerHTML = html; cu.whoHtml = html; }
+}
+$("cuWho").addEventListener("click", (e) => {
+  const a = e.target.closest("[data-open-person]");
+  if (a) { e.preventDefault(); showPerson(+a.dataset.openPerson); }
+});
 
 // ── polling loops ─────────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

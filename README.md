@@ -95,7 +95,7 @@ now on, even when the page is closed and after the VM reboots.
 ## Using the viewer
 
 - **Start / Pause** (or press space), **+1 day**, **+1 year**.
-- **Speed**: from 1 day per second (to watch closely) up to **max**.
+- **Speed**: from 1 day every 2 minutes (for watching up close) up to **max**.
 - **3D / Map**: orbit around a 3D landscape, or use the flat map.
   Drawing happens on your PC's graphics card; the server only sends numbers.
 - **Show**: natural colours, vegetation, grazing herds, predators, temperature,
@@ -115,6 +115,40 @@ now on, even when the page is closed and after the VM reboots.
   checkpoint and re-simulates forward — because the simulation is
   deterministic, the past comes back exactly as it was.
 - **Worlds**: create a new world from a seed, or switch between saved worlds.
+
+## Watching up close
+
+Click a place (or a person) and press **👁 Watch up close** — or double-click
+the 3D land. The view drops down to a 20 km patch of the world: hills and
+valleys, rivers and lakes, forests and grass of the right kind for the
+climate, grazing herds, the sun and sky moving through the day, stars at
+night. And the people who live there, going through their day:
+
+- waking at dawn, walking out to **gather** (bending to dig and pick) or
+  **hunt** (with a spear, if they have one), going to the **water** to drink;
+- coming back to camp, **making** things they know how to make, one of them
+  kneeling to **light the evening fire**; sitting around it, talking, then
+  sleeping around the embers; babies carried by their mothers;
+- **speech bubbles** when they speak, showing the word they really used in
+  their own language and what it means, e.g. «mewo» (water);
+- **thought bubbles** for the person you're following ("Looking for «woni»
+  (roots and seeds)", "Cold night coming. No fire.") — their thoughts use
+  their own words for things;
+- a panel with what they're doing now, how fed / watered / healthy they are,
+  and a diary of their day so far.
+
+Click anyone to follow them. Drag to look around, scroll to zoom (all the way
+out to see the whole patch), **Esc** or **← Back to world** to return.
+Entering slows the world to **1 day every 2 minutes** (put back when you
+leave); pause and drag the time slider to scrub through the day.
+
+**Important:** close-up mode only *shows* what the simulation decided. Each
+day the world works out what everyone did (who gathered how much, who
+drank, who lit the fire, who talked to whom with which words); close-up mode
+then plays that day out as a scene. The small details — the exact path
+someone walked, where they knelt — are filled in for the picture, the same
+way every time, and never feed back into the world. So watching changes
+nothing, and the world runs just as fast when nobody is watching.
 
 ## About the people
 
@@ -304,10 +338,11 @@ aworld/
   knowledge.py materials, what they can become, and discovering/teaching/forgetting it
   language.py  sounds, coining and copying words, sound change, names, finding languages
   observer.py  measures the world and writes history (read-only)
+  closeup.py   turns a simulated day into a scene to watch (read-only)
   storage.py   checkpoints, thinning, storage cap, history database
   runner.py    keeps the world ticking in the background
   server.py    small web server (Python standard library only)
-web/           the viewer (one page, three.js for 3D)
+web/           the viewer (one page, three.js for 3D; closeup.js draws close-up mode)
 tests/         determinism, save/load, rewind, physics, storage, web API
 ```
 
@@ -344,6 +379,7 @@ never outcomes.
 | 10. Metals & machines | high-temperature physics (smelting, alloys), levers, wheels, boats | metalworking, carts, river and sea travel |
 | 11. Towns & cities | dense building, roads worn by traffic, public works, structures limited by material strength | towns, cities, skylines |
 | 12. Power & industry | water, wind and heat as energy; deeper chemistry; more physics as people reach it | mills, engines — wherever they get to |
+| alongside | **realism**: A. close-up mode ✅ · B. richer minds (memories, feelings, goals) · C. AI voices (a local language model gives people real thoughts and conversations, in their own words) · D. experiments with AI-driven decisions | people you can watch, and who feel real |
 | ongoing | speed (a compiled core for big worlds), history and "why did this happen?" tools, experiments that compare worlds | |
 
 Nothing on this list is guaranteed to happen in any given world — that's the

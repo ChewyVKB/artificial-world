@@ -315,6 +315,9 @@ def _talk(world, age_y, temp_c, rain_mm, rng) -> list:
 
         said = ws > 0
         sp, hr, m, ws, L = sp[said], hr[said], m[said], ws[said], L[said]
+        if "_talk" in world.state:              # a record for watching up close
+            ids = p["id"]
+            world.state["_talk"].extend(zip(ids[sp].tolist(), ids[hr].tolist(), m.tolist(), ws.tolist()))
         wh = lex[hr, m].astype(np.int64)
         same = wh == ws
         # Understood: both grow more sure of the word.

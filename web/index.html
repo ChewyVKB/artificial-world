@@ -73,6 +73,14 @@
   <section class="viewport" id="viewport">
     <canvas id="view3"></canvas>
     <canvas id="view2" hidden></canvas>
+    <canvas id="viewC" hidden></canvas>
+    <div class="cu-overlay" id="cuOverlay" hidden></div>
+    <div class="cu-hud" id="cuHud" hidden>
+      <button id="cuBack" title="Back to the whole world">← Back to world</button>
+      <div class="cu-time"><span id="cuClock">—</span><input type="range" id="cuHour" min="0" max="23.99" step="0.05" value="8" title="Time of day (when paused)"></div>
+      <label class="cu-check"><input type="checkbox" id="cuFollow" checked> follow</label>
+    </div>
+    <div class="cu-who" id="cuWho" hidden></div>
     <div class="legend" id="legend"></div>
     <div class="toast" id="toast" hidden></div>
     <div class="error-banner" id="errorBanner" hidden></div>

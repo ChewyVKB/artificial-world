@@ -218,6 +218,9 @@ def daily(world, age_y: np.ndarray, fire: np.ndarray, rng: np.random.Generator) 
             make = knows_r & lacks & can[:, r] & (rng.random(makers.size) < chance)
             rows = makers[make]
             p["items"][rows] |= b
+            if world.state.get("_made") is None:
+                world.state["_made"] = np.zeros(n, dtype=np.uint32)
+            world.state["_made"][rows] |= b
             p["skill"][rows, r] += 0.02 * (1 - p["skill"][rows, r])           # practice makes perfect
     for r in ITEM_RECIPES:
         b = np.uint32(1 << r)

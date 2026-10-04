@@ -203,6 +203,8 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     supply = plant_supply + hunt_supply
     crowd = np.bincount(p["pos"], minlength=ncell).astype(float)
 
+    pos_before = p["pos"].copy()
+
     # ── 1. move ─────────────────────────────────────────────────
     head = households(p, age_y)
     hr = np.flatnonzero(head == np.arange(n))                 # household heads decide for everyone
@@ -227,7 +229,9 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     frac_h = np.minimum(1.0, hunt_supply / np.maximum(want_h, 1e-9))
     # Each person splits effort between gathering and hunting in proportion to what's available.
     w_p = plant_supply[pos] / np.maximum(supply[pos], 1e-9)
-    got = capacity * w_p * frac_p[pos] + hunt_skill * (1 - w_p) * frac_h[pos]
+    gathered = capacity * w_p * frac_p[pos]
+    hunted = hunt_skill * (1 - w_p) * frac_h[pos]
+    got = gathered + hunted
     if learning:
         got = (got + fx["extra_food"] * s["capacity_c"][pos]) * fx["food"]
     took_p = np.bincount(pos, capacity * w_p * frac_p[pos], minlength=ncell)
@@ -268,10 +272,24 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
         + ((p["energy"] > 0.2) & (p["hydration"] > 0.3)) * 0.01, 0, 1)
 
     # ── 4. discover, learn, make things ──────────────────────────
+    world.state["_made"] = None
+    world.state["_talk"] = []
     if learning:
         out["discoveries"] = knowledge.daily(world, age_y, fx["fire"], rng)
     if talking:
         out["words"] = language.daily(world, age_y, temp_c, rain_mm, rng)
+
+    # What each person did today — for watching up close. (Nothing in the
+    # simulation reads this back; it's a record, like a diary.)
+    made = world.state.pop("_made", None)
+    world.state["today"] = {
+        "tick": tick, "ids": p["id"].copy(), "head": p["id"][head], "from": pos_before, "to": p["pos"].copy(),
+        "target": p["target"][head].copy(), "gathered": gathered, "hunted": hunted, "food": food_i, "need": need,
+        "drank": s["water_c"][pos].copy(), "rain_drink": (~s["water_c"][pos]) & (rain_mm[pos] > 2.5),
+        "fire": fx["fire"].copy() if learning else np.zeros(n, dtype=bool),
+        "made": made if made is not None else np.zeros(n, dtype=np.uint32),
+        "talk": world.state.pop("_talk", []), "discoveries": list(out["discoveries"]),
+    }
 
     # ── 5. pair up ─────────────────────────────────────────────
     _pair(p, age_y, rng)
@@ -290,6 +308,7 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     due = np.flatnonzero((p["pregnant_until"] == tick) & (p["pregnant_until"] >= 0))
     newborn = _births(p, due, tick, cfg, rng, naming=talking)
     out["births"] = newborn
+    world.state["today"]["births"] = [b[0] for b in newborn]
 
     # ── 6. death ──────────────────────────────────────────────
     n = p["id"].size           # includes newborns now
@@ -316,6 +335,7 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     dead = np.flatnonzero(starved | dies_hazard)
     if dead.size:
         out["deaths"] = [(int(p["id"][i]), int(cause[i]), float(age_y[i]), int(p["pos"][i])) for i in dead]
+        world.state["today"]["deaths"] = out["deaths"]
         _remove(p, dead)
     return out
 

@@ -24,6 +24,8 @@ from .storage import WorldStore, list_worlds
 from .world import World
 
 SPEEDS = {            # label -> simulated days per real second (0 = as fast as possible)
+    "1 day/2 min": 1 / 120,     # for watching people up close
+    "1 day/min": 1 / 60,
     "1 day/s": 1,
     "1 week/s": 7,
     "1 month/s": 30,
@@ -121,7 +123,7 @@ class Runner:
             if rate == 0:
                 days = 30
             else:
-                owed = min(owed + (now - last) * rate, rate)   # never try to "catch up" more than 1s
+                owed = min(owed + (now - last) * rate, max(rate, 1.0))   # never "catch up" more than ~1 s
                 days = int(owed)
                 owed -= days
             last = now
@@ -147,7 +149,7 @@ class Runner:
                 self.running = False
                 continue
             if rate:
-                owed = min(owed + (days - done), rate)   # unfinished days carry over (max 1 s worth)
+                owed = min(owed + (days - done), max(rate, 1.0))   # unfinished days carry over (max ~1 s worth)
             # Real throughput, measured about once a second.
             if now - mark_time >= 1.0:
                 rate_now = (tick - mark_tick) / (now - mark_time)
@@ -216,6 +218,7 @@ class Runner:
                           "sim_version": meta["sim_version"], "width": w.shape[1], "height": w.shape[0]},
                 "tick": w.tick, "year": w.year, "day_of_year": w.day_of_year, "days_per_year": w.dpy,
                 "running": self.running, "speed": self.speed, "speeds": list(SPEEDS),
+                "day_seconds": (1.0 / SPEEDS[self.speed]) if SPEEDS.get(self.speed) else None,
                 "error": self.error,
                 "pause_on_major": self.pause_on_major,
                 "days_per_sec": round(self.measured_days_per_sec, 1),
@@ -334,6 +337,18 @@ class Runner:
                             "words": words})
             return {"enabled": True, "languages": out,
                     "words_per_person": float((p["lex"] > 0).sum(axis=1).mean()) if p["id"].size else 0}
+
+    def scene(self, x: int | None = None, y: int | None = None, person: int | None = None) -> dict:
+        """A close-up of the 3×3 squares around a place (or around a person)."""
+        from . import closeup
+        with self.lock:
+            w = self.world
+            if person is not None and w.has_people:
+                r = ppl.index_of(w.state["people"]["id"], np.array([int(person)]))[0]
+                if r >= 0:
+                    full = int(w.static["cells"][w.state["people"]["pos"][r]])
+                    x, y = full % w.shape[1], full // w.shape[1]
+            return closeup.scene(w, int(x or 0), int(y or 0), self.store)
 
     def knowledge(self) -> dict:
         """The world's techniques: who knows them, when they were found or lost."""

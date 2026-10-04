@@ -20,6 +20,8 @@
     POST /api/worlds/delete     {"id": "..."}  delete a world permanently
     GET  /api/knowledge         every technique: who knows it, when it was found or lost
     GET  /api/languages         every language: its words, speakers, where it came from
+    GET  /api/scene?x=&y=       close-up of the 3×3 squares around a place (or ?person=id): terrain,
+                                camps, each person's day as a timeline, speech, thoughts, animals
 """
 from __future__ import annotations
 
@@ -136,6 +138,10 @@ def make_handler(runner: Runner):
         def r_person(self, q):
             self._json(runner.person(int(q.get("id", 0))))
 
+        def r_scene(self, q):
+            self._json(runner.scene(int(q["x"]) if "x" in q else None, int(q["y"]) if "y" in q else None,
+                                    int(q["person"]) if "person" in q else None))
+
         def r_languages(self, q):
             self._json(runner.languages())
 
@@ -205,6 +211,7 @@ def make_handler(runner: Runner):
         ("GET", "/api/person"): Handler.r_person,
         ("GET", "/api/knowledge"): Handler.r_knowledge,
         ("GET", "/api/languages"): Handler.r_languages,
+        ("GET", "/api/scene"): Handler.r_scene,
         ("POST", "/api/worlds/delete"): Handler.r_delete_world,
         ("POST", "/api/control"): Handler.r_control,
         ("POST", "/api/save"): Handler.r_save,
