@@ -71,6 +71,7 @@ MEANINGS = (
     ("mate", "mate, partner"), ("stranger", "stranger"), ("i", "I, me"), ("you", "you"), ("give", "give"),
     ("good", "good"), ("bad", "bad"), ("big", "big"), ("small", "small"), ("one", "one"), ("two", "two"),
     ("many", "many"), ("sleep", "sleep"),
+    ("afraid", "afraid"), ("sad", "sad, grieving"), ("happy", "happy"), ("alone", "alone"), ("dead", "dead, gone"),
 )
 M = len(MEANINGS)
 MI = {k: i for i, (k, _) in enumerate(MEANINGS)}
@@ -219,6 +220,14 @@ def salient(world, age_y: np.ndarray, temp_c: np.ndarray, rain_mm: np.ndarray) -
     out[:, MI["old"]] = age_y > 45
     out[:, MI["mate"]] = p["partner"] >= 0
     out[:, MI["father"]] = (age_y < 15) | ((p["sex"] == 1) & (p["partner"] >= 0))
+    if "minds" in world.cfg and "feel" in p:          # people talk about how they feel
+        from .minds import F
+        f = p["feel"]
+        out[:, MI["afraid"]] = f[:, F["fear"]] > 0.4
+        out[:, MI["sad"]] = f[:, F["grief"]] > 0.3
+        out[:, MI["dead"]] = f[:, F["grief"]] > 0.2
+        out[:, MI["happy"]] = f[:, F["joy"]] > 0.55
+        out[:, MI["alone"]] = f[:, F["lonely"]] > 0.5
     # Someone around who calls their people by a different name: a stranger.
     us = p["lex"][:, MI["people"]].astype(np.int64)
     named = us > 0

@@ -815,7 +815,7 @@ export class CloseUp {
       if (!el) { el = document.createElement("div"); el.className = "cu-label"; this.overlay.appendChild(el); this.labels.set(pid, el); }
       if (el._html !== html) { el.innerHTML = html; el._html = html; }
       el.style.transform = `translate(${sx}px, ${sy}px) translate(-50%, -100%)`;
-      el.style.display = ""; seen.add(pid);
+      el.style.display = ""; el.style.zIndex = sel ? 10 : said ? 5 : 1; seen.add(pid);
     }
     for (const [pid, el] of this.labels) if (!seen.has(pid)) el.style.display = "none";
   }

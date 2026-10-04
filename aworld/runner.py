@@ -17,6 +17,7 @@ import numpy as np
 from .config import load_config
 from . import knowledge as kn
 from . import language as lg
+from . import minds as mi
 from . import people as ppl
 from .ecology import BIOMES
 from .observer import GRAZERS_PER_UNIT, PREDATORS_PER_UNIT, Observer
@@ -268,6 +269,7 @@ class Runner:
                 self._people_layer(),
                 self._knowledge_layer(),
                 self._language_layer(),
+                self._mood_layer(),
             ]
             return b"".join(np.round(l).astype(np.uint8).tobytes() for l in layers)
 
@@ -277,6 +279,18 @@ class Runner:
         if w.has_people and w.state["people"]["id"].size:
             counts = np.bincount(w.state["people"]["pos"], minlength=w.static["cells"].size)
             out[w.static["cells"]] = np.minimum(counts, 255)
+        return out.reshape(w.shape)
+
+    def _mood_layer(self) -> np.ndarray:
+        """Average mood of the people in each cell: 1 = wretched … 255 = happy (0 = nobody)."""
+        w = self.world
+        out = np.zeros(w.shape[0] * w.shape[1])
+        p = w.state.get("people")
+        if p is not None and p["id"].size and mi.enabled(w.cfg):
+            ncell = w.static["cells"].size
+            tot = np.bincount(p["pos"], mi.mood(p), minlength=ncell)
+            cnt = np.bincount(p["pos"], minlength=ncell)
+            out[w.static["cells"]] = np.where(cnt > 0, 1 + 254 * tot / np.maximum(cnt, 1), 0)
         return out.reshape(w.shape)
 
     def _knowledge_layer(self) -> np.ndarray:
@@ -413,7 +427,8 @@ class Runner:
         p, w = self.world.state["people"], self.world
         return {"id": int(p["id"][i]), "name": lg.name_str(int(p["name"][i])) if "name" in p else None,
                 "sex": "female" if p["sex"][i] == ppl.FEMALE else "male",
-                "age": round((w.tick - int(p["birth"][i])) / w.dpy, 1), "health": round(float(p["health"][i]), 2)}
+                "age": round((w.tick - int(p["birth"][i])) / w.dpy, 1), "health": round(float(p["health"][i]), 2),
+                **({"mood": mi.mood_word(p["feel"][i])} if mi.enabled(w.cfg) and "feel" in p else {})}
 
     def person(self, pid: int) -> dict:
         """Everything known about one person, living or dead."""
@@ -473,6 +488,8 @@ class Runner:
                                      for r, rec in enumerate(kn.RECIPES) if int(p["known"][i]) >> r & 1]
                     info["carrying"] = [rec["name"] for r, rec in enumerate(kn.RECIPES)
                                         if rec["lasts"] and int(p["items"][i]) >> r & 1]
+                if mi.enabled(w.cfg):
+                    info["mind"] = self._mind(i, status_of, xy)
                 info["age"] = round(age, 1)
             elif rec and rec["birth_tick"] <= w.tick:
                 info = {"id": pid, "alive": False, "name": rec.get("name"),
@@ -489,6 +506,45 @@ class Runner:
                                  "alive": bool(ppl.index_of(p["id"], np.array([c["id"]]))[0] >= 0), "name": c["name"]}
                                 for c in self.store.children_of(pid, w.tick)]
             return info
+
+    def _mind(self, i: int, status_of, xy) -> dict:
+        """Feelings, goal and memories of living person row i, in words."""
+        w, p = self.world, self.world.state["people"]
+        f = p["feel"][i]
+        st = mi.strength(p, np.array([i]), w.tick, w.dpy)[0]
+        mems = []
+        for k in np.argsort(-p["mem_tick"][i]):
+            kind = int(p["mem_kind"][i, k])
+            if kind == 0 or st[k] < 0.02:
+                continue
+            key = mi.KINDS[kind][0]
+            who = int(p["mem_who"][i, k]) if mi.KINDS[kind][2] == "person" or key == "predator" else None
+            other = status_of(who) if who else None
+            nm = (other["name"] or f"#{other['id']}") if other else "someone"
+            what = int(p["mem_what"][i, k])
+            place = xy(int(p["mem_cell"][i, k])) if p["mem_cell"][i, k] >= 0 else None
+            at = f" at {place['x']}, {place['y']}" if place else ""
+            cause = ppl.CAUSES[what] if 0 <= what < len(ppl.CAUSES) else "unknown"
+            tech = kn.RECIPES[what]["name"].lower() if 0 <= what < kn.R else "something"
+            rel = "mother" if who == int(p["mother"][i]) else "father" if who == int(p["father"][i]) else "parent"
+            her = "her" if p["sex"][i] == ppl.FEMALE else "his"
+            if other and not other["alive"] and key.startswith("lost_") and what == 0:
+                rec = self.store.person_record(int(who))
+                if rec and rec.get("death_age") is not None and rec["death_age"] < 40:
+                    cause = "illness"
+            text = {
+                "child_born": f"{nm} was born", "lost_partner": f"lost {nm}, {her} partner ({cause})",
+                "lost_child": f"{her} child {nm} died ({cause})", "lost_parent": f"{her} {rel} {nm} died ({cause})",
+                "lost_kin": f"{her} brother or sister {nm} died ({cause})",
+                "predator": f"predators killed {nm}{at}", "hunger": f"went hungry{at}", "plenty": f"ate well{at}",
+                "discovered": f"worked out how to make {tech}", "learned": f"learned how to make {tech}",
+                "paired": f"paired with {nm}", "thirst": f"nearly died of thirst{at}",
+                "strangers": f"met people who call themselves «{lg.word_str(int(p['mem_who'][i, k]))}»",
+            }[key]
+            mems.append({"year": int(p["mem_tick"][i, k]) // w.dpy, "kind": key, "text": text,
+                         "strength": round(float(st[k]), 2), "person": other, "place": place})
+        return {"feelings": {name: round(float(f[j]), 2) for j, name in enumerate(mi.FEELINGS)},
+                "mood": mi.mood_word(f), "goal": mi.GOALS[int(p["goal"][i])], "memories": mems}
 
     def cell(self, x: int, y: int) -> dict:
         with self.lock:

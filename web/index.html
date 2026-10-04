@@ -55,6 +55,7 @@
         <option value="people">People</option>
         <option value="knowledge">Knowledge</option>
         <option value="language">Languages</option>
+        <option value="mood">Mood</option>
         <option value="stone">Flint</option>
         <option value="clay">Clay</option>
         <option value="wood">Wood</option>
@@ -118,6 +119,10 @@
       <section class="card">
         <h3>People</h3>
         <canvas class="chart" id="chartPeople" height="130"></canvas>
+      </section>
+      <section class="card" id="mindCard" hidden>
+        <h3>Feelings <small>average across everyone</small></h3>
+        <canvas class="chart" id="chartFeelings" height="110"></canvas>
       </section>
       <section class="card">
         <h3>Evolution <small>average inherited traits</small></h3>

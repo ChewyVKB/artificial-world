@@ -24,6 +24,7 @@ import numpy as np
 
 from . import knowledge as kn
 from . import language as lg
+from . import minds as mi
 from .ecology import BIOMES
 from .people import FEMALE, G, index_of
 
@@ -218,6 +219,9 @@ def _person(world, p, r, age, t, today, x0, y0) -> dict:
                       "drank_at_water": bool(today["drank"][t]), "drank_rain": bool(today["rain_drink"][t]),
                       "fire": bool(today["fire"][t]),
                       "made": [rec["key"] for i, rec in enumerate(kn.RECIPES) if int(today["made"][t]) >> i & 1]}
+    if mi.enabled(world.cfg) and "feel" in p:
+        d["mind"] = {"mood": mi.mood_word(p["feel"][r]), "goal": mi.GOALS[int(p["goal"][r])],
+                     "feelings": {k: round(float(p["feel"][r, j]), 2) for j, k in enumerate(mi.FEELINGS)}}
     d["_row"] = r
     return d
 
@@ -411,8 +415,52 @@ def _thoughts(world, p, m, mode, age, hh=None) -> list[dict]:
         at(21, f"{_say(p, r, 'mother', 'Mother')} is gone.")
     if m["pregnant"]:
         at(14, "The child moves inside me.")
+    if "mind" in m:
+        _mind_thoughts(world, p, r, m, age, at)
     out.sort(key=lambda d: d["t"])
     return out
+
+
+def _mind_thoughts(world, p, r, m, age, at) -> None:
+    """Thoughts that come from memories and feelings."""
+    tick, dpy = world.tick, world.dpy
+    f = m["mind"]["feelings"]
+    st = mi.strength(p, np.array([r]), tick, dpy)[0]
+    here = int(p["pos"][r])
+
+    def name_of(pid, fallback):
+        row = index_of(p["id"], np.array([pid]))[0]
+        return lg.name_str(int(p["name"][row])) if row >= 0 and "name" in p and p["name"][row] else fallback
+
+    lost_said = False
+    for k in np.argsort(-st):
+        kind, ago = mi.KINDS[int(p["mem_kind"][r, k])][0], (tick - int(p["mem_tick"][r, k])) / dpy
+        if st[k] < 0.15:
+            break
+        who = int(p["mem_who"][r, k])
+        if kind in ("lost_partner", "lost_child", "lost_parent", "lost_kin") and ago < 2 and not lost_said:
+            rel = {"lost_partner": _say(p, r, "mate", "my mate"), "lost_child": _say(p, r, "child", "my child"),
+                   "lost_parent": _say(p, r, "mother" if who == m["mother"] else "father",
+                                       "Mother" if who == m["mother"] else "Father"),
+                   "lost_kin": "my brother, my sister"}[kind]
+            at(21.5, f"{rel}… {_say(p, r, 'dead', 'gone')}." + (" I still see them by the fire." if ago < 0.3 else ""))
+            lost_said = True
+        elif kind == "predator" and int(p["mem_cell"][r, k]) == here and ago < 4:
+            at(10, f"{_say(p, r, 'predator', 'Predators')} took someone here. Stay close.")
+        elif kind == "plenty" and int(p["mem_cell"][r, k]) == here and ago > 0.4:
+            at(9.5, "This place. We ate well here before.")
+        elif kind == "child_born" and ago < 0.1:
+            at(7.5, f"The little one — {name_of(who, 'our child')}.")
+        elif kind == "strangers" and ago < 0.1:
+            at(13, f"Strangers. They call themselves «{lg.word_str(who)}».")
+        elif kind == "discovered" and ago < 0.05:
+            at(16, "I made it work. I can do it again.")
+    if f["fear"] > 0.5:
+        at(17.5, f"{_say(p, r, 'afraid', 'Afraid')}. Something is out there.")
+    if f["lonely"] > 0.5 and age >= 14:
+        at(20.5, "No one to sit with." if m["partner"] < 0 else "So few of us.")
+    if f["joy"] > 0.65 and f["grief"] < 0.2:
+        at(20.2, f"{_say(p, r, 'happy', 'happy')}. Full belly, people close.")
 
 
 def _animals(world, x0, y0, span, people) -> list[dict]:

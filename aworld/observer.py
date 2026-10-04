@@ -60,6 +60,11 @@ def measure_people(world: World) -> dict:
         mean = p["genes"].mean(axis=0)
         for name in GENES:
             m[f"trait_{name}"] = float(mean[G[name]])
+        if "minds" in world.cfg and "feel" in p:
+            from .minds import FEELINGS
+            fm = p["feel"].mean(axis=0)
+            for j, name in enumerate(FEELINGS):
+                m[f"feel_{name}"] = float(fm[j])
     return m
 
 

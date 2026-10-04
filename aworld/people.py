@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from . import knowledge, language
+from . import knowledge, language, minds
 
 # ── heritable traits ──────────────────────────────────────────────────
 # Each has a real trade-off, so evolution has something to work with.
@@ -52,13 +52,15 @@ ARRAYS = {   # name -> dtype; one entry per living person
     "items": np.uint32,     # things this person is carrying (one bit each)
     "name": np.int64,       # a word their mother named them with (0 = no name)
     "accent": np.uint32,    # the sound rules they speak with (see language.ACCENT_RULES)
+    "goal": np.int8,        # what matters most to them right now (see minds.GOALS)
 }
-DEFAULTS = {"known": 0, "items": 0, "name": 0, "accent": 0}    # value for fields missing from older saves (else -1)
+DEFAULTS = {"known": 0, "items": 0, "name": 0, "accent": 0, "goal": 0}    # value for fields missing from older saves (else -1)
 # Per-person tables: name -> (columns, dtype)
 MATRICES = {
     "skill": (knowledge.R, np.float32),     # how good they are at each technique
     "lex": (language.M, np.int32),          # their word for each meaning (0 = none)
     "lexs": (language.M, np.float32),       # how sure they are of that word
+    **minds.MATRICES,                       # feelings and memories
 }
 
 
@@ -144,6 +146,7 @@ def founders(cfg: dict, static: dict, rng: np.random.Generator, tick: int) -> tu
         "last_birth": np.full(n, -10 ** 9, dtype=np.int64), "target": np.full(n, -1, dtype=np.int64),
         "known": np.zeros(n, dtype=np.uint32), "items": np.zeros(n, dtype=np.uint32),
         "name": np.zeros(n, dtype=np.int64), "accent": np.zeros(n, dtype=np.uint32),
+        "goal": np.zeros(n, dtype=np.int8),
         "genes": np.clip(genes, GENE_RANGE[:, 0], GENE_RANGE[:, 1]),
         "next_id": n + 1,
     })
@@ -223,6 +226,10 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
         tinkering = 1 - 0.1 * genes[:, G["curiosity"]]      # time spent experimenting isn't spent foraging
         capacity = capacity * tinkering * fx["gather"]
         hunt_skill = hunt_skill * tinkering * fx["hunt"]
+    thinking = minds.enabled(world.cfg)
+    if thinking:                                             # grief takes the heart out of work for a while
+        heart = 1 - world.cfg["minds"].get("grief_slows_work", 0.2) * p["feel"][:, minds.F["grief"]]
+        capacity, hunt_skill = capacity * heart, hunt_skill * heart
     want_p = np.bincount(pos, capacity, minlength=ncell)
     want_h = np.bincount(pos, hunt_skill, minlength=ncell)
     frac_p = np.minimum(1.0, plant_supply / np.maximum(want_p, 1e-9))
@@ -274,6 +281,7 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     # ── 4. discover, learn, make things ──────────────────────────
     world.state["_made"] = None
     world.state["_talk"] = []
+    known_before = p["known"].copy()
     if learning:
         out["discoveries"] = knowledge.daily(world, age_y, fx["fire"], rng)
     if talking:
@@ -290,6 +298,16 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
         "made": made if made is not None else np.zeros(n, dtype=np.uint32),
         "talk": world.state.pop("_talk", []), "discoveries": list(out["discoveries"]),
     }
+
+    if thinking:
+        minds.feel(world, {
+            "age_y": age_y, "head": head, "food": food_i, "need": need, "cold": cold,
+            "fire": fx["fire"] if learning else None,
+            "guard": fx["predators"][:n] if learning else np.ones(n),
+            "curiosity": genes[:, G["curiosity"]], "wanderlust": genes[head, G["wanderlust"]],
+            "target": p["target"][head], "known_before": known_before, "discoveries": out["discoveries"],
+        })
+    ids_before, partner_before = p["id"].copy(), p["partner"].copy()
 
     # ── 5. pair up ─────────────────────────────────────────────
     _pair(p, age_y, rng)
@@ -333,10 +351,13 @@ def step(world, temp_c: np.ndarray, rain_mm: np.ndarray, rng: np.random.Generato
     starved = p["health"] <= 0
     cause = np.where(starved, np.where(p["hydration"] <= 0, 2, 1), np.where(u < h_old, 0, 3))
     dead = np.flatnonzero(starved | dies_hazard)
+    dead_parents = (p["mother"][dead], p["father"][dead])
     if dead.size:
         out["deaths"] = [(int(p["id"][i]), int(cause[i]), float(age_y[i]), int(p["pos"][i])) for i in dead]
         world.state["today"]["deaths"] = out["deaths"]
         _remove(p, dead)
+    if thinking:
+        minds.events(world, ids_before, partner_before, newborn, out["deaths"], dead_parents, out["discoveries"])
     return out
 
 
@@ -362,6 +383,16 @@ def _move(p, hr, group, supply, crowd, temp_c, world, rng) -> None:
     wander = genes[hr, G["wanderlust"]]
     insul = genes[hr, G["insulation"]]
     social = genes[hr, G["sociability"]]
+    thinking = minds.enabled(world.cfg)
+    tick, dpy = world.tick, world.dpy
+    if thinking:
+        mc_ = world.cfg["minds"]
+        fear = p["feel"][hr, minds.F["fear"]]
+        lonely = p["feel"][hr, minds.F["lonely"]]
+        social = social * (1 + mc_.get("loneliness_pull", 1.5) * lonely)   # the lonely are drawn harder toward others
+        place_w = mc_.get("place_memory", 0.8)
+        flee_at = mc_.get("fear_moves_above", 0.65)
+        fear_w = mc_.get("fear_avoids_predators", 1.0)
 
     # Once people have a word for "us", they'd rather camp among those who use the same word:
     # people they can understand. (Without language, any company will do.)
@@ -382,8 +413,9 @@ def _move(p, hr, group, supply, crowd, temp_c, world, rng) -> None:
         f = np.where(hit, kcount[j] if keys.size else 0, 0) - own
         return np.where(word > 0, np.maximum(f, 0), others)
 
-    def appeal(cells, own, idx):
-        """How good `cells` look to households `idx` (higher is better)."""
+    def appeal(cells, own, idx, recall=False):
+        """How good `cells` look to households `idx` (higher is better).
+        recall: also count fond memories (when weighing places away from here)."""
         g = group[idx]
         others = crowd[cells] - own
         food = np.minimum(supply[cells] / (others + g), 4.0) / 4.0
@@ -393,12 +425,19 @@ def _move(p, hr, group, supply, crowd, temp_c, world, rng) -> None:
         # Company is good; company you can talk to is better.
         company = social[idx] * (0.6 * np.log1p(np.maximum(others, 0)) + 0.6 * np.log1p(np.maximum(kin, 0))) / 3.0
         crowded = -np.clip(others + g - 25.0, 0, None) / 25.0
-        return 1.5 * food + water + 0.6 * comfort + company + crowded
+        score = 1.5 * food + water + 0.6 * comfort + company + crowded
+        if thinking:                                         # good and bad memories of places
+            score = score + place_w * minds.place_feeling(p, hr[idx], cells, tick, dpy, good=0.3 if recall else 0.0)
+            # Frightened people weigh danger more: they look for land without predators.
+            score = score - fear[idx] * fear_w * np.clip(world.state["predators"][cells] * 4.0, 0, 1)
+        return score
 
     # Decide to look for a new camp.
     per_head = supply[here] / np.maximum(crowd[here], 1.0)
-    restless = rng.random(hr.size) < 0.004 + 0.03 * wander
-    looking = (target < 0) & ((per_head < low_food) | restless) & (thirst < 0.6)
+    restless = rng.random(hr.size) < 0.004 + 0.03 * wander + (0.03 * lonely if thinking else 0.0)
+    # Fear moves people on from where the danger is, even from good land.
+    frightened = ((fear > flee_at) & (world.state["predators"][here] > 0.005)) if thinking else False
+    looking = (target < 0) & ((per_head < low_food) | restless | frightened) & (thirst < 0.6)
     if looking.any():
         L = np.flatnonzero(looking)
         k = 16
@@ -410,7 +449,15 @@ def _move(p, hr, group, supply, crowd, temp_c, world, rng) -> None:
         ok = cand >= 0
         cand = np.where(ok, cand, here[L][None, :])
         dist = np.maximum(np.abs(oy), np.abs(ox))
-        score = appeal(cand, 0.0, L) - 0.3 * dist / radius
+        if thinking:                                         # places they remember eating well are candidates too
+            mem = minds.remembered_good_places(p, hr[L], tick, dpy)          # (K, L)
+            mc = np.where(mem >= 0, mem, here[L][None, :])
+            md = np.maximum(np.abs(cy[mc] - cy[here[L]][None, :]), np.abs(cx[mc] - cx[here[L]][None, :]))
+            mok = (mem >= 0) & (md <= 3 * radius)
+            cand = np.vstack([cand, mc])
+            ok = np.vstack([ok, mok])
+            dist = np.vstack([dist, md])
+        score = appeal(cand, 0.0, L, recall=True) - 0.3 * dist / radius
         score = np.where(ok, score, -np.inf)
         best = np.argmax(score, axis=0)
         cur = appeal(here[L], group[L], L)
@@ -507,6 +554,7 @@ def _births(p: dict, mothers: np.ndarray, tick: int, cfg: dict, rng: np.random.G
         "known": np.zeros(k, dtype=np.uint32), "items": np.zeros(k, dtype=np.uint32),
         "name": language.name_children(p, mothers, rng) if naming else np.zeros(k, dtype=np.int64),
         "accent": p["accent"][mothers].copy(),               # children start with their mother's accent
+        "goal": np.full(k, minds.GI["stay close to mother"], dtype=np.int8),
     }
     p["energy"][mothers] = np.maximum(p["energy"][mothers] - 0.15, 0)
     p["last_birth"][mothers] = tick

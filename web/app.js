@@ -32,6 +32,7 @@ const RAMPS = {
   temp: [[0, .18, .30, .75], [.47, .90, .93, .95], [.7, .95, .75, .35], [1, .80, .18, .14]],
   rain: [[0, .62, .38, .18], [.5, .90, .90, .86], [1, .18, .42, .80]],
   people: [[0, .14, .15, .15], [.02, .45, .30, .55], [.3, .95, .55, .35], [1, 1.0, .95, .75]],
+  mood: [[0, .55, .18, .22], [.35, .78, .45, .28], [.6, .85, .80, .45], [1, .40, .85, .55]],
   knowledge: [[0, .14, .15, .15], [.05, .30, .25, .50], [.5, .45, .60, .90], [1, .85, .95, 1.0]],
   stone: [[0, .16, .17, .16], [1, .85, .85, .80]],
   clay: [[0, .16, .17, .16], [1, .80, .45, .30]],
@@ -50,6 +51,7 @@ const LEGENDS = {
   rain: ["Rain this year vs. normal", "−50%", "+50%"],
   people: ["People per cell (~16 km²)", "0", "20+"],
   knowledge: ["Techniques known per person (average)", "0", "10"],
+  mood: ["How people feel (average)", "wretched", "happy"],
   stone: ["Flint (knappable stone)", "none", "plenty"],
   clay: ["Clay", "none", "plenty"],
   wood: ["Wood", "none", "plenty"],
@@ -118,12 +120,12 @@ async function loadFrame() {
   const r = await fetch("/api/frame");
   const tick = +r.headers.get("X-Tick");
   const buf = await r.arrayBuffer();
-  if (buf.byteLength !== S.N * 9) return;          // world switched mid-flight
+  if (buf.byteLength !== S.N * 10) return;          // world switched mid-flight
   S.frame = new Uint8Array(buf);
   S.tick = tick;
   paint();
 }
-const L = (k) => S.frame.subarray(k * S.N, (k + 1) * S.N);   // 0 plants 1 grazers 2 predators 3 snow 4 temp 5 rain 6 people 7 knowledge 8 language
+const L = (k) => S.frame.subarray(k * S.N, (k + 1) * S.N);   // 0 plants 1 grazers 2 predators 3 snow 4 temp 5 rain 6 people 7 knowledge 8 language 9 mood
 
 // ── colouring (shared by 3D and 2D) ───────────────────────────
 function cellColor(i, out) {
@@ -137,6 +139,12 @@ function cellColor(i, out) {
   if (lake) return mix(BIOME_RGB[1], BIOME_RGB[1], 0, out);
   const f = S.frame;
   const layer = S.layer;
+  if (layer === "mood" && f) {
+    const m = f[9 * S.N + i];
+    if (m) ramp("mood", (m - 1) / 254, out);
+    else { out[0] = .16; out[1] = .17; out[2] = .16; }
+    return out;
+  }
   if (layer === "language" && f) {
     const id = f[8 * S.N + i];
     if (id) { const c = langColor(id); out[0] = c[0]; out[1] = c[1]; out[2] = c[2]; }
@@ -272,7 +280,7 @@ function updatePeople3D() {
   }
   three.people.count = k;
   three.people.instanceMatrix.needsUpdate = true;
-  three.people.visible = !["people", "knowledge", "language"].includes(S.layer);
+  three.people.visible = !["people", "knowledge", "language", "mood"].includes(S.layer);
 }
 
 function resize() {
@@ -324,7 +332,7 @@ function paint() {
   } else if (S.view === "2d" && flat.img) {
     const d = flat.img.data;
     const shadeOn = S.layer === "natural" || S.layer === "biome";
-    const ppl = S.frame && !["people", "knowledge", "language"].includes(S.layer) ? S.frame.subarray(6 * S.N, 7 * S.N) : null;
+    const ppl = S.frame && !["people", "knowledge", "language", "mood"].includes(S.layer) ? S.frame.subarray(6 * S.N, 7 * S.N) : null;
     for (let i = 0; i < S.N; i++) {
       cellColor(i, tmp);
       if (ppl && ppl[i]) mix(tmp, PERSON, Math.min(1, 0.85 + ppl[i] / 40), tmp);
@@ -421,7 +429,7 @@ async function refreshInspector() {
   if (here.length) {
     const shown = here.slice(0, 40);
     people = `<h4>${here.length} ${here.length === 1 ? "person" : "people"} here</h4><ul class="plist">${shown.map((p) =>
-      `<li><a href="#" data-person="${p.id}">${p.name ? escapeHtml(p.name) : "#" + p.id}</a><span>${p.sex === "female" ? "♀" : "♂"} ${p.age} yrs</span>${bar(p.health)}</li>`).join("")}</ul>` +
+      `<li><a href="#" data-person="${p.id}">${p.name ? escapeHtml(p.name) : "#" + p.id}</a><span>${p.sex === "female" ? "♀" : "♂"} ${p.age} yrs${p.mood ? ` · ${escapeHtml(p.mood)}` : ""}</span>${bar(p.health)}</li>`).join("")}</ul>` +
       (here.length > shown.length ? `<div class="muted small">…and ${here.length - shown.length} more</div>` : "");
   }
   const watch = CloseUpMod && c.vegetation_pct !== undefined && c.biome !== "Ocean"
@@ -467,6 +475,7 @@ function renderPerson(p) {
     ${kv(rows)}
     <h4>Children (${p.children.length})</h4><div class="kids">${kids}</div>
     ${p.knows ? `<h4>Knows how to make (${p.knows.length})</h4>${p.knows.length ? kv(p.knows.map((k) => [k.name, bar(k.skill)])) : '<div class="muted small">nothing yet</div>'}` : ""}
+    ${p.mind ? renderMind(p.mind) : ""}
     ${p.carrying && p.carrying.length ? `<h4>Carrying</h4><div class="small">${p.carrying.map(escapeHtml).join(" · ")}</div>` : ""}
     ${p.vocabulary && p.vocabulary.length ? `<h4>Their words (${p.vocabulary.length})</h4><div class="vocab">${p.vocabulary.map((v) =>
       `<span title="${escapeHtml(v.meaning)} · ${Math.round(v.sure * 100)}% sure"><b>${escapeHtml(v.word)}</b> ${escapeHtml(v.meaning)}</span>`).join("")}</div>` : ""}
@@ -532,7 +541,7 @@ function fmt(v) {
 const TRAIT_COLORS = { size: "#e4e7e5", insulation: "#6fb3e0", fertility: "#e07a9f", longevity: "#b39ddb", wanderlust: "#e2b65c", sociability: "#7bc96f", curiosity: "#5fd3c4", speech: "#f0a0ff" };
 async function refreshCharts() {
   const traitNames = Object.keys(TRAIT_COLORS).map((t) => "trait_" + t).join(",");
-  const m = await api(`/api/metrics?names=grazers,predators,vegetation_pct,drought_area_pct,population,births_per_year,deaths_per_year,techniques_known,techniques_per_person,languages,words_per_person,${traitNames}&points=400`);
+  const m = await api(`/api/metrics?names=grazers,predators,vegetation_pct,drought_area_pct,population,births_per_year,deaths_per_year,techniques_known,techniques_per_person,languages,words_per_person,feel_joy,feel_fear,feel_grief,feel_lonely,${traitNames}&points=400`);
   const s = m.series, css = getComputedStyle(document.documentElement);
   const hasPeople = (s.population || []).length > 0;
   $("peopleCharts").hidden = !hasPeople;
@@ -547,6 +556,14 @@ async function refreshCharts() {
       data: (s["trait_" + t] || []).map(([k, v]) => [k, t === "size" ? (v - 0.6) / 0.8 : v]),
     })), m.days_per_year, { ymax: 1 });
   }
+  const hasMind = (s.feel_joy || []).length > 0;
+  $("mindCard").hidden = !hasMind;
+  if (hasMind) lineChart($("chartFeelings"), [
+    { label: "joy", color: "#7bc96f", data: s.feel_joy },
+    { label: "fear", color: "#e07a5f", data: s.feel_fear || [] },
+    { label: "grief", color: "#9ec5ff", data: s.feel_grief || [] },
+    { label: "loneliness", color: "#e2b65c", data: s.feel_lonely || [] },
+  ], m.days_per_year, { ymax: 1 });
   const hasLanguage = (s.words_per_person || []).length > 0;
   $("languageCard").hidden = !hasLanguage;
   if (hasLanguage) {
@@ -581,6 +598,19 @@ async function refreshHistory() {
     || `<li class="muted">Nothing notable yet.</li>`;
 }
 const escapeHtml = (t) => t.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const FEEL_LABEL = { joy: "Joy", fear: "Fear", grief: "Grief", lonely: "Loneliness" };
+function renderMind(m) {
+  const mem = m.memories.slice(0, 12).map((x) => `<li><span class="fade" style="opacity:${0.35 + 0.65 * Math.min(1, x.strength)}">${
+      x.strength >= 0.5 ? "vivid" : x.strength >= 0.2 ? "clear" : "faint"}</span><b>year ${x.year}</b>${x.person && x.person.id
+      ? escapeHtml(x.text).replace(escapeHtml(x.person.name || "#" + x.person.id), link(x.person))
+      : escapeHtml(x.text)}</li>`).join("");
+  return `<h4>Mind</h4>
+    ${kv([["Feels", escapeHtml(m.mood)], ["Wants to", escapeHtml(m.goal)],
+          ...Object.entries(m.feelings).map(([k, v]) => [FEEL_LABEL[k] || k, bar(v)])])}
+    <h4>Remembers (${m.memories.length})</h4>
+    ${mem ? `<ol class="memories">${mem}</ol>` : '<div class="muted small">nothing that stuck</div>'}`;
+}
 
 // ── status / controls ─────────────────────────────────────────
 const SEASONS_N = ["Spring", "Summer", "Autumn", "Winter"];
@@ -824,8 +854,10 @@ function renderWho(h = cuHour()) {
   ].filter((x) => x.t <= h).sort((a, b) => a.t - b.t).slice(-12);
   const html = `<div class="nm">${p.name ? escapeHtml(p.name) : "#" + p.id} <span class="muted small">${p.sex === "female" ? "♀" : "♂"} ${Math.floor(p.age)} yrs</span>
       <a href="#" class="small" data-open-person="${p.id}" style="float:right">details</a></div>
-    <div class="doing">${escapeHtml(doing)}</div>
-    ${kv([["Health", bar(p.health)], ["Fed", bar(p.energy)], ["Water", bar(p.hydration)]])}
+    <div class="doing">${escapeHtml(doing)}${p.mind ? ` <span class="muted">· feels ${escapeHtml(p.mind.mood)} · wants to ${escapeHtml(p.mind.goal)}</span>` : ""}</div>
+    ${kv([["Health", bar(p.health)], ["Fed", bar(p.energy)], ["Water", bar(p.hydration)],
+          ...(p.mind ? [["Joy", bar(p.mind.feelings.joy)], ["Fear", bar(p.mind.feelings.fear)],
+                        ["Grief", bar(p.mind.feelings.grief)], ["Loneliness", bar(p.mind.feelings.lonely)]] : [])])}
     ${p.carrying.length ? `<div class="small muted">Carrying ${p.carrying.map((c) => escapeHtml(c.replaceAll("_", " "))).join(", ")}</div>` : ""}
     <ol>${log.map((x) => `<li class="${x.said ? "said" : ""}"><b>${hhmm(x.t)}</b>${x.html}</li>`).join("") || '<li class="muted">…</li>'}</ol>`;
   if (html !== cu.whoHtml) { el.innerHTML = html; cu.whoHtml = html; }

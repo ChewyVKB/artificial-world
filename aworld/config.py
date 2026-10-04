@@ -24,7 +24,36 @@ def ensure_config(path: str | Path | None = None) -> Path:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(BUNDLED_CONFIG_PATH, target)
         print(f"[config] no settings file found — wrote the defaults to {target}")
+    elif target.exists() and BUNDLED_CONFIG_PATH.exists() and target.resolve() != BUNDLED_CONFIG_PATH.resolve():
+        add_new_sections(target, BUNDLED_CONFIG_PATH)
     return target
+
+
+def add_new_sections(target: Path, defaults: Path) -> list[str]:
+    """When an update brings a new kind of physics (a new [section] in the defaults),
+    add that section to the user's settings file so NEW worlds get it. Existing
+    sections and values are never touched, and existing worlds keep their own settings."""
+    with open(target, "rb") as f:
+        have = tomllib.load(f)
+    text = defaults.read_text()
+    with open(defaults, "rb") as f:
+        want = tomllib.load(f)
+    missing = [k for k in want if k not in have]
+    if not missing:
+        return []
+    # Cut the defaults file into sections (each keeps the comments written under its header).
+    chunks, current = {}, None
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]") and not stripped.startswith("[["):
+            current = stripped[1:-1].strip()
+        if current:
+            chunks.setdefault(current, []).append(line)
+    with open(target, "a") as f:
+        for k in missing:
+            f.write("\n" + "".join(chunks.get(k, [])).rstrip() + "\n")
+    print(f"[config] added new settings sections to {target}: {', '.join(missing)}")
+    return missing
 
 
 def load_config(path: str | Path | None = None, overrides: dict | None = None) -> dict:

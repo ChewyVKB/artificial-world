@@ -77,6 +77,15 @@ conformity_sample = 4        # how many others nearby a listener compares a word
 accent_rate = 0.05           # chance a listener picks up the speaker's accent (children: five times as likely)
 accent_innovate = 0.000005     # chance a speaker starts pronouncing a sound a new way (a new sound rule)
 
+[minds]
+# Memories, feelings and goals. Worlds created without this section have
+# people who live only in the present. (See aworld/minds.py for how they work.)
+grief_slows_work = 0.2       # how much a grieving person's foraging suffers (0 = not at all)
+fear_moves_above = 0.65      # a household this frightened moves away from predators, even from good land (1 = never)
+fear_avoids_predators = 1.0  # how much frightened people steer clear of predator country
+loneliness_pull = 1.5        # how much harder lonely people are drawn toward others
+place_memory = 0.8           # how much remembered good/bad places sway where people camp
+
 [storage]
 checkpoint_every_days = 360  # save a full snapshot this often (360 = once per year)
 max_storage_gb = 100         # hard cap; old snapshots are thinned to stay under it

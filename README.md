@@ -281,6 +281,47 @@ dialects (and the words that set them apart), where it came from, and its
 words; **Show → Languages** maps where each is spoken; a person's page shows
 their name, language and dialect, accent, and every word they know.
 
+## About minds
+
+People now carry the past with them. Open anyone and look under **Mind**:
+
+- **Memories** — up to ten things that happened to them: the birth of a
+  child, a partner who died (and how), the place a predator killed someone,
+  a valley where they ate well, a place they nearly died of thirst, the day
+  they worked out how to make something, the first time they met people who
+  call themselves by another name. Memories fade (a lost child slowly, a good
+  meal quickly); when there's no room, the faintest is forgotten. They die
+  with the person.
+- **Feelings** — joy, fear, grief and loneliness, each rising with what
+  happens and slowly settling back.
+- **A goal** — what matters most to them right now: find water, stay safe,
+  mourn, look after the baby, find a partner, learn from someone, explore…
+
+What follows from that isn't scripted — there are just a few simple effects:
+
+- households steer clear of places where bad things happened to them, and
+  go back to places they remember eating well (so families can start
+  following their own seasonal rounds);
+- frightened people move away from predator country, even from good land;
+- lonely people are pulled harder toward others;
+- someone grieving forages less for a while;
+- people have words for how they feel (afraid, sad, happy, alone, dead) and
+  use them when they feel it.
+
+The **Mood** map layer shows how people feel in each place, and the
+**Feelings** chart tracks the world's average joy, fear, grief and
+loneliness. Up close, people's thoughts now come from their memories
+("Predators took someone here. Stay close.", "«mate»… «gone».").
+
+The strength of each effect is a setting in `[minds]`. These inner lives are
+also what the AI voices (Phase C) will work from: an AI can only give someone
+believable thoughts if it knows what they remember and how they feel.
+
+**Updating:** new kinds of physics only apply to **new** worlds (an existing
+world keeps the rules it was born with). When you update, any new settings
+sections are added to your settings file automatically, so the next world
+you create gets minds.
+
 ## Deleting worlds
 
 **Worlds → Delete** next to any world erases it — its history and every save
@@ -337,6 +378,7 @@ aworld/
   people.py    individual humans: senses, movement, food, water, family, birth, death
   knowledge.py materials, what they can become, and discovering/teaching/forgetting it
   language.py  sounds, coining and copying words, sound change, names, finding languages
+  minds.py     memories, feelings and goals
   observer.py  measures the world and writes history (read-only)
   closeup.py   turns a simulated day into a scene to watch (read-only)
   storage.py   checkpoints, thinning, storage cap, history database
@@ -379,7 +421,7 @@ never outcomes.
 | 10. Metals & machines | high-temperature physics (smelting, alloys), levers, wheels, boats | metalworking, carts, river and sea travel |
 | 11. Towns & cities | dense building, roads worn by traffic, public works, structures limited by material strength | towns, cities, skylines |
 | 12. Power & industry | water, wind and heat as energy; deeper chemistry; more physics as people reach it | mills, engines — wherever they get to |
-| alongside | **realism**: A. close-up mode ✅ · B. richer minds (memories, feelings, goals) · C. AI voices (a local language model gives people real thoughts and conversations, in their own words) · D. experiments with AI-driven decisions | people you can watch, and who feel real |
+| alongside | **realism**: A. close-up mode ✅ · B. richer minds (memories, feelings, goals) ✅ · C. AI voices (a local language model gives people real thoughts and conversations, in their own words) · D. experiments with AI-driven decisions | people you can watch, and who feel real |
 | ongoing | speed (a compiled core for big worlds), history and "why did this happen?" tools, experiments that compare worlds | |
 
 Nothing on this list is guaranteed to happen in any given world — that's the
